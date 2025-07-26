@@ -17,6 +17,7 @@ def verify_verisafe_jwt(token: str):
     Raises:
         Exception: If the token is invalid or expired
     """
+    print(repr(VERISAFE_API_SECRET))
     try:
         payload = jwt.decode(
             token,
