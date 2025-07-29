@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 
 
@@ -57,3 +58,4 @@ class Task(models.Model):
     deleted = models.BooleanField(default=False)
     hidden = models.BooleanField(default=False)
     web_view_link = models.URLField()
+    owner_id = models.UUIDField(default=uuid.uuid4, editable=False)
