@@ -33,7 +33,8 @@ class Task(models.Model):
         primary_key=True,
     )
     kind = models.CharField(
-        max_length=3,
+        blank=True,
+        null=True,
     )
     etag = models.CharField()
     title = models.CharField(max_length=1024)
@@ -42,7 +43,7 @@ class Task(models.Model):
         auto_now_add=True,
     )
     self_link = models.URLField()
-    parent = models.CharField()
+    parent = models.CharField(blank=True, null=True)
     position = models.CharField()
     notes = models.CharField(
         max_length=8192,
@@ -54,8 +55,11 @@ class Task(models.Model):
     due = models.DateTimeField(
         auto_now_add=True,
     )
-    completed = models.DateTimeField()
+    completed = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
     deleted = models.BooleanField(default=False)
     hidden = models.BooleanField(default=False)
     web_view_link = models.URLField()
-    owner_id = models.UUIDField(default=uuid.uuid4, editable=False)
+    owner_id = models.UUIDField(default=uuid.uuid4, editable=True)

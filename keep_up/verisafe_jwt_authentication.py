@@ -7,7 +7,6 @@ from .verisafe_jwt import verify_verisafe_jwt  # from earlier
 
 class VerisafeJWTAuthentication(BaseAuthentication):
     def authenticate(self, request):
-        print("Authenticating")
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             raise AuthenticationFailed(
@@ -18,8 +17,8 @@ class VerisafeJWTAuthentication(BaseAuthentication):
         try:
             payload = verify_verisafe_jwt(token)
             request.verisafe_claims = payload
+            request.user_id = payload["sub"]
             # You can return a dummy user or create a real user model if needed
             return (AnonymousUser(), None)
         except Exception as e:
-            print(e)
             raise AuthenticationFailed(str(e))
