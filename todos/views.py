@@ -103,19 +103,25 @@ class CreateTodoApiView(CreateAPIView):
             service = build("tasks", "v1", credentials=creds)
 
             # Create the task
-            task_title = request.data.get("title", "Your academia task")
-            task_notes = request.data.get(
-                "notes", "This is a task created via the Google Tasks API."
-            )
-            task_due = request.data.get("due", timezone.now())
+            task_title = request.data.get("title")
+            if not task_title:  # Title is mandatory for Google Tasks API
+                return Response(
+                    data={"message": "Task title is required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            task_notes = request.data.get("notes", None)
+            task_due = request.data.get("due", None)
             task_parent = request.data.get("parent", None)
             task = {
                 "title": task_title,
-                "notes": task_notes,
-                "due": task_due.isoformat(),
                 "status": "needsAction",
                 "parent": task_parent,
             }
+            if task_notes:
+                task["notes"] = task_notes
+            if task_due:
+                task["due"] = task_due
 
             created_task = (
                 service.tasks()
@@ -266,6 +272,7 @@ class UpdateTodoApiView(APIView):
             task.notes = updated_notes
             task.due = updated_due
             task.status = updated_status
+            task.updated = updated_google_task["updated"]
             task.save()
 
             logger.info(
