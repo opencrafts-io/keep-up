@@ -1,16 +1,18 @@
-from datetime import datetime
 import logging
 import os
 import uuid
 from django.utils import timezone
+from googleapiclient.http import HttpError
 from pythonjsonlogger.json import JsonFormatter
 from rest_framework.views import APIView, Response, status
 from rest_framework.generics import (
     CreateAPIView,
     DestroyAPIView,
+    ListAPIView,
     UpdateAPIView,
     get_object_or_404,
 )
+from rest_framework.pagination import PageNumberPagination
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task
 from verisafe.retrieve_user_socials import retrieve_user_social_accounts
@@ -26,6 +28,14 @@ logger.setLevel(logging.ERROR)
 handler = logging.StreamHandler()
 handler.setFormatter(JsonFormatter())
 logger.addHandler(handler)
+
+
+class CustomTaskPagination(PageNumberPagination):
+    page_size = 20  # Default number of tasks per page for your API
+    page_size_query_param = (
+        "page_size"  # Allows client to specify page size (e.g., ?page_size=50)
+    )
+    max_page_size = 100  # Maximum page size allowed
 
 
 class PingAPIView(APIView):
@@ -466,6 +476,204 @@ class CompleteTodoApiView(UpdateAPIView):
             )
             return Response(
                 data={"message": f"Error completing Google task: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ListTodoApiView(ListAPIView):
+    """
+    Retrieves and lists todo items from Google Tasks, synchronizing with the local database.
+    """
+
+    authentication_classes = [VerisafeJWTAuthentication]
+    serializer_class = TaskSerializer
+    pagination_class = CustomTaskPagination  # Apply the custom pagination class
+
+    def get_queryset(self):
+        user_id = getattr(self.request, "user_id", None)
+        if user_id:
+            # Order tasks as you prefer them to be displayed to the client
+            return Task.objects.filter(owner_id=user_id).order_by(
+                "status", "due", "position"
+            )
+        return Task.objects.none()
+
+    def get(self, request, *args, **kwargs):
+        user_id: str | None = getattr(request, "user_id", None)
+
+        if not user_id:
+            logger.error(
+                "Failed to extract user_id from JWT claims",
+                extra={"user_id": user_id},
+            )
+            return Response(
+                data={
+                    "message": "We couldn't extract your user id from the provided token. "
+                    "Please ensure the token is valid and contains the necessary user data."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        socials = retrieve_user_social_accounts(user_id)
+        if isinstance(socials, str):
+            return Response(
+                data={"message": socials}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        google_social = next((s for s in socials if s["provider"] == "google"), None)
+        if not google_social:
+            logger.error(
+                "No Google social account found for user.", extra={"user_id": user_id}
+            )
+            return Response(
+                data={
+                    "message": "No Google social account linked to this user. Please consider linking your Google account."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        creds = Credentials(
+            token=google_social["access_token"],
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            refresh_token=google_social["refresh_token"],
+            token_uri="https://oauth2.googleapis.com/token",
+        )
+
+        try:
+            service = build("tasks", "v1", credentials=creds)
+
+            # --- Google API Pagination Loop (Fetch ALL tasks from Google) ---
+            all_google_tasks = []
+            page_token = None
+            while True:
+                google_tasks_response = (
+                    service.tasks()
+                    .list(
+                        tasklist="@default",
+                        showCompleted=True,
+                        showHidden=True,
+                        maxResults=100,  # Google's maxResults for tasks.list can be up to 100.
+                        pageToken=page_token,
+                    )
+                    .execute()
+                )
+
+                all_google_tasks.extend(google_tasks_response.get("items", []))
+                page_token = google_tasks_response.get("nextPageToken")
+                if not page_token:
+                    break  # No more pages
+
+            logger.info(
+                f"Retrieved a total of {len(all_google_tasks)} tasks from Google Tasks API for user {user_id}."
+            )
+
+            # --- Synchronize with local database (Upsert Logic) ---
+            # Create a set of Google Task IDs for efficient lookup
+            google_task_ids = {task["id"] for task in all_google_tasks}
+
+            # Keep track of updated/created local tasks (optional, mainly for internal logging/debugging)
+            # local_tasks_processed = []
+
+            for google_task in all_google_tasks:
+                task_id = google_task["id"]
+
+                # Prepare data for local database, aligning with model nullability
+                task_data_for_db = {
+                    "id": task_id,
+                    "kind": google_task.get("kind"),
+                    "etag": google_task.get("etag"),
+                    "title": google_task.get("title"),
+                    "updated": google_task.get("updated"),
+                    "self_link": google_task.get("selfLink"),
+                    "parent": google_task.get("parent", None),
+                    "position": google_task.get("position"),
+                    "notes": google_task.get("notes", None),
+                    "status": google_task.get("status"),
+                    "due": google_task.get("due", None),
+                    "completed": google_task.get("completed", None),
+                    "deleted": google_task.get(
+                        "deleted", False
+                    ),  # Assuming Google API provides this or it's always False unless deleted
+                    "hidden": google_task.get("hidden", False),  # Same as above
+                    "web_view_link": google_task.get("webViewLink"),
+                    "owner_id": uuid.UUID(user_id),
+                }
+
+                try:
+                    local_task_instance = Task.objects.get(id=task_id, owner_id=user_id)
+                    serializer = TaskSerializer(
+                        instance=local_task_instance,
+                        data=task_data_for_db,
+                        partial=True,
+                    )
+                    if serializer.is_valid():
+                        updated_instance = serializer.save()
+                        # local_tasks_processed.append(updated_instance)
+                        logger.debug(f"Updated local task {task_id}.")
+                    else:
+                        logger.error(
+                            f"Failed to update local task {task_id}. Errors: {serializer.errors}"
+                        )
+
+                except Task.DoesNotExist:
+                    serializer = TaskSerializer(data=task_data_for_db)
+                    if serializer.is_valid():
+                        new_instance = serializer.save()
+                        # local_tasks_processed.append(new_instance)
+                        logger.debug(f"Created new local task {task_id}.")
+                    else:
+                        logger.error(
+                            f"Failed to create local task {task_id}. Errors: {serializer.errors}"
+                        )
+
+            # --- Optional: Mark local tasks as deleted if they no longer exist in Google Tasks ---
+            # This is important for full synchronization.
+            # Fetch all current local tasks for this user
+            current_local_task_ids = set(
+                Task.objects.filter(owner_id=user_id, deleted=False).values_list(
+                    "id", flat=True
+                )
+            )
+
+            # IDs that are in local DB but NOT in Google's response
+            ids_to_mark_deleted = current_local_task_ids - google_task_ids
+
+            if ids_to_mark_deleted:
+                # Update these tasks to marked as deleted in your local DB
+                deleted_count = Task.objects.filter(
+                    id__in=ids_to_mark_deleted, owner_id=user_id
+                ).update(deleted=True)
+                logger.info(
+                    f"Marked {deleted_count} local tasks as deleted (no longer found in Google Tasks)."
+                )
+
+            # --- DRF Pagination & Response ---
+            # The ListAPIView's default 'get' behavior will now automatically:
+            # 1. Call self.get_queryset() to get the filtered tasks from the local DB.
+            # 2. Apply the pagination_class (CustomTaskPagination) to that queryset.
+            # 3. Serialize the paginated results.
+            # 4. Return the paginated response.
+            return super().get(request, *args, **kwargs)
+
+        except HttpError as e:
+            logger.error(
+                f"Google Tasks API error during retrieval: {e.resp.status} - {e.content.decode()}",
+                extra={"user_id": user_id},
+            )
+            return Response(
+                data={
+                    "message": f"Error retrieving tasks from Google: {e.content.decode()}"
+                },
+                status=e.resp.status,
+            )
+        except Exception as e:
+            logger.exception(
+                f"An unexpected error occurred during task retrieval or local sync: {str(e)}",
+                extra={"user_id": user_id},
+            )
+            return Response(
+                data={"message": f"An unexpected error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
