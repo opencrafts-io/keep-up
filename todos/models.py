@@ -39,21 +39,24 @@ class Task(models.Model):
     etag = models.CharField()
     title = models.CharField(max_length=1024)
     updated = models.DateTimeField(
-        auto_created=True,
-        auto_now_add=True,
+        blank=True,
+        null=True,
     )
     self_link = models.URLField()
     parent = models.CharField(blank=True, null=True)
     position = models.CharField()
     notes = models.CharField(
         max_length=8192,
+        blank=True,
+        null=True,
     )
     status = models.CharField(
         max_length=32,
         choices=TASK_STATUSES,
     )
     due = models.DateTimeField(
-        auto_now_add=True,
+        null=True,
+        blank=True,
     )
     completed = models.DateTimeField(
         null=True,

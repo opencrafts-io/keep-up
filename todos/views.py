@@ -5,7 +5,12 @@ import uuid
 from django.utils import timezone
 from pythonjsonlogger.json import JsonFormatter
 from rest_framework.views import APIView, Response, status
-from rest_framework.generics import CreateAPIView, DestroyAPIView, get_object_or_404
+from rest_framework.generics import (
+    CreateAPIView,
+    DestroyAPIView,
+    UpdateAPIView,
+    get_object_or_404,
+)
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task
 from verisafe.retrieve_user_socials import retrieve_user_social_accounts
@@ -279,6 +284,181 @@ class UpdateTodoApiView(APIView):
             )
             return Response(
                 data={"message": f"Error updating task: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class CompleteTodoApiView(UpdateAPIView):
+    """
+    Marks a todo item as complete in Google Tasks.
+    """
+
+    authentication_classes = [VerisafeJWTAuthentication]
+
+    def put(self, request, *args, **kwargs):
+        user_id: str | None = getattr(request, "user_id", None)
+        task_id = kwargs.get("task_id")
+
+        if not user_id:
+            logger.error(
+                "Failed to extract user_id from JWT claims",
+                extra={"user_id": user_id},
+            )
+            return Response(
+                data={
+                    "message": "We couldn't extract your user id from the provided token. "
+                    "Please ensure the token is valid and contains the necessary user data."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not task_id:
+            return Response(
+                data={"message": "Task ID is required to complete a task."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Retrieve user socials
+        socials = retrieve_user_social_accounts(user_id)
+
+        if isinstance(socials, str):
+            return Response(
+                data={
+                    "message": socials,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Get Google social login
+        google_social = None
+        for social in socials:
+            if social["provider"] == "google":
+                google_social = social
+                break
+
+        if not google_social:
+            logger.error(
+                "No Google social account found for user.", extra={"user_id": user_id}
+            )
+            return Response(
+                data={
+                    "message": "No Google social account linked to this user. Please consider linking your Google account."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        creds = Credentials(
+            token=google_social["access_token"],
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            refresh_token=google_social["refresh_token"],
+            token_uri="https://oauth2.googleapis.com/token",
+        )
+
+        local_task_instance = None
+        try:
+            local_task_instance = Task.objects.get(id=task_id)
+            logger.debug(
+                f"DEBUG: Retrieved local_task_instance (ID: {local_task_instance.id}, Title: {local_task_instance.title})"
+            )
+        except Task.DoesNotExist:
+            logger.error(
+                f"Local database Task with ID {task_id} not found for update. It might need to be created first or there's a data sync issue."
+            )
+            return Response(
+                data={"message": "Task not found in local database for update."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            # Build the Google Tasks API service
+            service = build("tasks", "v1", credentials=creds)
+
+            # First, get the existing task to ensure it exists and get its current state
+            try:
+                task_to_update = (
+                    service.tasks().get(tasklist="@default", task=task_id).execute()
+                )
+            except Exception as e:
+                logger.error(
+                    f"Task with ID {task_id} not found or inaccessible: {str(e)}"
+                )
+                return Response(
+                    data={
+                        "message": f"Task with ID {task_id} not found or inaccessible."
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Update the task's status to 'completed' and set completion date
+            # if its not yet completed otherwise set it as incomplete
+            if local_task_instance.status == "completed":
+                print("there")
+                task_to_update["status"] = "needsAction"
+                task_to_update["completed"] = None
+            else:
+                print("Here")
+                task_to_update["status"] = "completed"
+                task_to_update["completed"] = timezone.now().isoformat()
+
+            # Execute the update
+            updated_task = (
+                service.tasks()
+                .update(tasklist="@default", task=task_id, body=task_to_update)
+                .execute()
+            )
+
+            # Prepare data for serializer (similar to your creation logic)
+            task_data = {
+                "id": updated_task["id"],
+                "kind": updated_task["kind"],
+                "etag": updated_task["etag"],
+                "title": updated_task["title"],
+                "updated": updated_task["updated"],
+                "self_link": updated_task["selfLink"],
+                "parent": updated_task.get("parent", ""),
+                "position": updated_task.get("position", ""),
+                "notes": updated_task.get(
+                    "notes", ""
+                ),  # Notes might not always be present
+                "status": updated_task["status"],
+                "due": updated_task.get("due", None),  # Due might not always be present
+                "completed": updated_task.get("completed", None),
+                "deleted": False,
+                "hidden": False,
+                "web_view_link": updated_task["webViewLink"],
+                "owner_id": uuid.UUID(user_id),
+            }
+
+            # Use the TaskSerializer to validate and save the task's updated status to the database
+            serializer = TaskSerializer(
+                instance=local_task_instance, data=task_data, partial=True
+            )  # Use partial=True for updates
+            if serializer.is_valid():
+                task_instance = serializer.save()
+                logger.info(
+                    f"Task with ID {task_instance.id} successfully completed and updated in database."
+                )
+                return Response(
+                    data=serializer.data,
+                    status=status.HTTP_200_OK,  # 200 OK for successful update
+                )
+            else:
+                return Response(
+                    data={
+                        "message": "Failed to update task status in the database.",
+                        "error": serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error completing Google Task with ID {task_id}: {str(e)}",
+                extra={"user_id": user_id},
+            )
+            return Response(
+                data={"message": f"Error completing Google task: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
