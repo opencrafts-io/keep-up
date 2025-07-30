@@ -103,15 +103,19 @@ class CreateTodoApiView(CreateAPIView):
                 "notes", "This is a task created via the Google Tasks API."
             )
             task_due = request.data.get("due", timezone.now())
+            task_parent = request.data.get("parent", None)
             task = {
                 "title": task_title,
                 "notes": task_notes,
                 "due": task_due.isoformat(),
                 "status": "needsAction",
+                "parent": task_parent,
             }
 
             created_task = (
-                service.tasks().insert(tasklist="@default", body=task).execute()
+                service.tasks()
+                .insert(tasklist="@default", body=task, parent=task_parent)
+                .execute()
             )
 
             # Prepare data for serializer
