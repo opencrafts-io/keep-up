@@ -9,6 +9,7 @@ from rest_framework.generics import (
     CreateAPIView,
     DestroyAPIView,
     ListAPIView,
+    RetrieveAPIView,
     UpdateAPIView,
     get_object_or_404,
 )
@@ -38,9 +39,7 @@ class CustomTaskPagination(PageNumberPagination):
     max_page_size = 100  # Maximum page size allowed
 
 
-class PingAPIView(APIView):
-    authentication_classes = [VerisafeJWTAuthentication]
-
+class PingAPIView(RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         """
         An endpoint that checks the heartbeat of the program
