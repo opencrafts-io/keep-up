@@ -45,7 +45,7 @@ class PingAPIView(APIView):
         """
         An endpoint that checks the heartbeat of the program
         """
-        return Response(data={"message": "He is risen"}, status=status.HTTP_200_OK)
+        return Response(data={"message": "He is risen."}, status=status.HTTP_200_OK)
 
 
 class CreateTodoApiView(CreateAPIView):
