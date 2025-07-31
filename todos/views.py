@@ -290,7 +290,7 @@ class UpdateTodoApiView(APIView):
             )
 
             return Response(
-                data={"message": "Task updated successfully."},
+                data=TaskSerializer(task).data,
                 status=status.HTTP_200_OK,
             )
 
