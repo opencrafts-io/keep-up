@@ -1,7 +1,7 @@
 import logging
 import os
 import uuid
-from django.utils import timezone
+from datetime import timezone, datetime
 from googleapiclient.http import HttpError
 from pythonjsonlogger.json import JsonFormatter
 from rest_framework.views import APIView, Response, status
@@ -16,6 +16,7 @@ from rest_framework.generics import (
 from rest_framework.pagination import PageNumberPagination
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task
+from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
 from verisafe.retrieve_user_socials import retrieve_user_social_accounts
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -120,18 +121,18 @@ class CreateTodoApiView(CreateAPIView):
                 )
 
             task_notes = request.data.get("notes", None)
-            task_due = request.data.get("due", None)
             task_parent = request.data.get("parent", None)
+            task_due_str = request.data.get(
+                "due"
+            )  # This is the input string from client
             task = {
                 "title": task_title,
                 "status": "needsAction",
                 "parent": task_parent,
+                "due": parse_date_time_to_iso_format(task_due_str),
             }
             if task_notes:
                 task["notes"] = task_notes
-            if task_due:
-                task["due"] = task_due
-
             created_task = (
                 service.tasks()
                 .insert(tasklist="@default", body=task, parent=task_parent)
@@ -409,11 +410,9 @@ class CompleteTodoApiView(UpdateAPIView):
             # Update the task's status to 'completed' and set completion date
             # if its not yet completed otherwise set it as incomplete
             if local_task_instance.status == "completed":
-                print("there")
                 task_to_update["status"] = "needsAction"
                 task_to_update["completed"] = None
             else:
-                print("Here")
                 task_to_update["status"] = "completed"
                 task_to_update["completed"] = timezone.now().isoformat()
 
