@@ -414,7 +414,7 @@ class CompleteTodoApiView(UpdateAPIView):
                 task_to_update["completed"] = None
             else:
                 task_to_update["status"] = "completed"
-                task_to_update["completed"] = timezone.now().isoformat()
+                task_to_update["completed"] = datetime.now().astimezone().isoformat()
 
             # Execute the update
             updated_task = (
