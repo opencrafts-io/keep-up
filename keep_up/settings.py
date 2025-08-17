@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Custom added apps
     "todos.apps.TodosConfig",
+    "agenda.apps.AgendaConfig"
 ]
 
 LOGGING = {
