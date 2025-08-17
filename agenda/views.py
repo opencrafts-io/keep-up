@@ -37,6 +37,28 @@ class CustomEventPagination(PageNumberPagination):
     max_page_size = 100
 
 
+class PingAPIView(RetrieveAPIView):
+    def get(self, request, *args, **kwargs):
+        """
+        An endpoint that checks the heartbeat of the program
+        """
+        return Response(data={"message": "Agenda API is running."}, status=status.HTTP_200_OK)
+
+    def post(self, request, *args, **kwargs):
+        """
+        Test endpoint to debug request data format
+        """
+        return Response(
+            data={
+                "message": "Test endpoint - received data",
+                "data": request.data,
+                "headers": dict(request.headers),
+                "user_id": getattr(request, "user_id", None)
+            }, 
+            status=status.HTTP_200_OK
+        )
+
+
 class CreateEventApiView(CreateAPIView):
     """
     Creates a calendar event
@@ -44,13 +66,138 @@ class CreateEventApiView(CreateAPIView):
 
     authentication_classes = [VerisafeJWTAuthentication]
 
+
+class CreateLocalEventApiView(CreateAPIView):
+    """
+    Creates a local calendar event without Google Calendar integration (for testing)
+    """
+
+    authentication_classes = [VerisafeJWTAuthentication]
+
     def post(self, request, *args, **kwargs):
         user_id: str | None = getattr(request, "user_id", None)
+        
+        # Log the request data for debugging
+        logger.info(f"Received local event creation request: {request.data}")
+        logger.info(f"User ID from token: {user_id}")
 
         if not user_id:
             logger.error(
                 "Failed to extract user_id from JWT claims",
-                extra={"user_id": user_id},
+                extra={"user_id": user_id, "headers": dict(request.headers)},
+            )
+            return Response(
+                data={
+                    "message": "We couldn't extract your user id from the provided token."
+                    "Please ensure the token is valid and contains the necessary user data."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            # Get event data from request
+            event_summary = request.data.get("summary")
+            if not event_summary:
+                return Response(
+                    data={"message": "Event summary is required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Parse start and end times
+            start_time_str = request.data.get("start_time")
+            end_time_str = request.data.get("end_time")
+
+            if not start_time_str or not end_time_str:
+                logger.error(f"Missing start_time or end_time: start_time={start_time_str}, end_time={end_time_str}")
+                return Response(
+                    data={"message": "Both start_time and end_time are required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Parse attendees - handle Flutter format
+            attendees = request.data.get("attendees", [])
+            if isinstance(attendees, dict):
+                # Flutter sends: {"attendee_0": {"email": "...", "displayName": "..."}}
+                attendees_list = []
+                for key, attendee in attendees.items():
+                    if isinstance(attendee, dict) and "email" in attendee:
+                        attendees_list.append(attendee)
+                attendees = attendees_list
+
+            # Parse recurrence - handle Flutter format
+            recurrence = request.data.get("recurrence", [])
+            if isinstance(recurrence, dict):
+                # Flutter sends: {"rule": "RRULE:FREQ=WEEKLY"}
+                recurrence_list = []
+                for key, value in recurrence.items():
+                    if isinstance(value, str) and value.startswith("RRULE:"):
+                        recurrence_list.append(value)
+                recurrence = recurrence_list
+
+            # Create event data for local database
+            event_data = {
+                "id": request.data.get("id", f"local_event_{uuid.uuid4().hex[:8]}"),
+                "summary": event_summary,
+                "description": request.data.get("description", ""),
+                "location": request.data.get("location", ""),
+                "start_time": start_time_str,
+                "end_time": end_time_str,
+                "all_day": request.data.get("all_day", False),
+                "timezone": request.data.get("timezone", "UTC"),
+                "status": request.data.get("status", "confirmed"),
+                "transparency": request.data.get("transparency", "opaque"),
+                "calendar_id": request.data.get("calendar_id", "local"),
+                "html_link": request.data.get("html_link", ""),
+                "created": request.data.get("created", datetime.now(timezone.utc)),
+                "updated": request.data.get("updated", datetime.now(timezone.utc)),
+                "etag": request.data.get("etag", f"\"local_{uuid.uuid4().hex[:8]}\""),
+                "attendees": attendees,
+                "reminders": request.data.get("reminders", {"useDefault": True}),
+                "recurrence": recurrence,
+                "owner_id": uuid.UUID(user_id),
+            }
+
+            # Use the EventSerializer to validate and save the event to the database
+            serializer = EventSerializer(data=event_data)
+            if serializer.is_valid():
+                event_instance = serializer.save()
+                logger.info(
+                    f"Local event successfully created and saved in database: {event_instance.id}"
+                )
+                return Response(
+                    data=serializer.data,
+                    status=status.HTTP_201_CREATED,
+                )
+            else:
+                logger.error(f"Serializer errors: {serializer.errors}")
+                return Response(
+                    data={
+                        "message": "Failed to create event in the database.",
+                        "error": serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            logger.error(
+                f"Error creating local event: {str(e)}",
+                extra={"user_id": user_id, "request_data": request.data},
+            )
+            return Response(
+                data={"message": f"Error creating local event: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def post(self, request, *args, **kwargs):
+        user_id: str | None = getattr(request, "user_id", None)
+        
+        # Log the request data for debugging
+        logger.info(f"Received event creation request: {request.data}")
+        logger.info(f"User ID from token: {user_id}")
+
+        if not user_id:
+            logger.error(
+                "Failed to extract user_id from JWT claims",
+                extra={"user_id": user_id, "headers": dict(request.headers)},
             )
             return Response(
                 data={
@@ -114,10 +261,14 @@ class CreateEventApiView(CreateAPIView):
             end_time_str = request.data.get("end_time")
 
             if not start_time_str or not end_time_str:
+                logger.error(f"Missing start_time or end_time: start_time={start_time_str}, end_time={end_time_str}")
                 return Response(
                     data={"message": "Both start_time and end_time are required."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+            # Log the parsed times for debugging
+            logger.info(f"Parsing times: start_time={start_time_str}, end_time={end_time_str}")
 
             # Create event body for Google Calendar API
             event_body = {
@@ -138,27 +289,56 @@ class CreateEventApiView(CreateAPIView):
                 },
             }
 
-            # Add attendees if provided
+            # Add attendees if provided - handle Flutter format
             attendees = request.data.get("attendees", [])
             if attendees:
-                event_body["attendees"] = attendees
+                # Convert Flutter format to Google Calendar format
+                if isinstance(attendees, dict):
+                    # Flutter sends: {"attendee_0": {"email": "...", "displayName": "..."}}
+                    attendees_list = []
+                    for key, attendee in attendees.items():
+                        if isinstance(attendee, dict) and "email" in attendee:
+                            attendees_list.append(attendee)
+                    event_body["attendees"] = attendees_list
+                elif isinstance(attendees, list):
+                    event_body["attendees"] = attendees
 
-            # Add recurrence if provided
+            # Add recurrence if provided - handle Flutter format
             recurrence = request.data.get("recurrence", [])
             if recurrence:
-                event_body["recurrence"] = recurrence
+                # Convert Flutter format to Google Calendar format
+                if isinstance(recurrence, dict):
+                    # Flutter sends: {"rule": "RRULE:FREQ=WEEKLY"}
+                    recurrence_list = []
+                    for key, value in recurrence.items():
+                        if isinstance(value, str) and value.startswith("RRULE:"):
+                            recurrence_list.append(value)
+                    event_body["recurrence"] = recurrence_list
+                elif isinstance(recurrence, list):
+                    event_body["recurrence"] = recurrence
 
-            # Create the event in Google Calendar
+            # Add reminders if provided - handle Flutter format
+            reminders = request.data.get("reminders", {})
+            if reminders and isinstance(reminders, dict):
+                # Flutter sends: {"useDefault": false, "overrides": [{"method": "popup", "minutes": 60}]}
+                if "useDefault" in reminders or "overrides" in reminders:
+                    event_body["reminders"] = reminders
+
+            # Create the event in Google Calendar FIRST
             calendar_id = request.data.get("calendar_id", "primary")
+            logger.info(f"Creating event in Google Calendar with body: {event_body}")
+            
             created_event = (
                 service.events()
                 .insert(calendarId=calendar_id, body=event_body)
                 .execute()
             )
+            
+            logger.info(f"Successfully created event in Google Calendar: {created_event['id']}")
 
-            # Prepare data for serializer
+            # NOW save the Google Calendar response to our database
             event_data = {
-                "id": created_event["id"],
+                "id": created_event["id"],  # Use Google Calendar's event ID
                 "summary": created_event["summary"],
                 "description": created_event.get("description", ""),
                 "location": created_event.get("location", ""),
@@ -184,27 +364,44 @@ class CreateEventApiView(CreateAPIView):
             if serializer.is_valid():
                 event_instance = serializer.save()
                 logger.info(
-                    f"Event successfully created and saved in database: {event_instance.id}"
+                    f"Event successfully saved to database after Google Calendar creation: {event_instance.id}"
                 )
                 return Response(
                     data=serializer.data,
                     status=status.HTTP_201_CREATED,
                 )
             else:
+                logger.error(f"Failed to save event to database after Google Calendar creation: {serializer.errors}")
+                # If we can't save to database, we should ideally delete from Google Calendar too
+                try:
+                    service.events().delete(calendarId=calendar_id, eventId=created_event["id"]).execute()
+                    logger.info(f"Cleaned up Google Calendar event after database save failure: {created_event['id']}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup Google Calendar event after database save failure: {cleanup_error}")
+                
                 return Response(
                     data={
-                        "message": "Failed to create event in the database.",
+                        "message": "Event created in Google Calendar but failed to save in database.",
                         "error": serializer.errors,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-        except Exception as e:
+        except HttpError as e:
             logger.error(
-                f"Error creating Google Calendar Event: {str(e)}",
-                extra={"user_id": user_id},
+                f"Google Calendar API error: {str(e)}",
+                extra={"user_id": user_id, "request_data": request.data, "status_code": e.resp.status},
             )
             return Response(
-                data={"message": f"Error creating Google Calendar event: {str(e)}"},
+                data={"message": f"Google Calendar API error: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error creating Google Calendar Event: {str(e)}",
+                extra={"user_id": user_id, "request_data": request.data},
+            )
+            return Response(
+                data={"message": f"Unexpected error creating Google Calendar event: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
