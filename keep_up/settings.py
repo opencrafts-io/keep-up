@@ -43,9 +43,11 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Package apps
+    "safedelete",
     # Custom added apps
     "todos.apps.TodosConfig",
-    "agenda.apps.AgendaConfig"
+    "agenda.apps.AgendaConfig",
 ]
 
 LOGGING = {
