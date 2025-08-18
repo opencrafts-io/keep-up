@@ -6,12 +6,8 @@ from googleapiclient.http import HttpError
 from pythonjsonlogger.json import JsonFormatter
 from rest_framework.views import APIView, Response, status
 from rest_framework.generics import (
-    CreateAPIView,
     DestroyAPIView,
     ListAPIView,
-    RetrieveAPIView,
-    UpdateAPIView,
-    get_object_or_404,
 )
 from rest_framework.pagination import PageNumberPagination
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
@@ -377,10 +373,10 @@ class ListEventsApiView(ListAPIView):
 
             service = build("calendar", "v3", credentials=creds)
 
-            # Get events from the last 30 days to the next 30 days
+            # Get events from the last 90 days to the next 90 days
             now = datetime.now(timezone.utc)
-            time_min = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            time_max = (now + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            time_min = (now - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            time_max = (now + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             logger.info(
                 f"Syncing calendar for user {user_id} from {time_min} to {time_max}"
