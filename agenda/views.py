@@ -37,30 +37,6 @@ class CustomEventPagination(PageNumberPagination):
     max_page_size = 100
 
 
-class PingAPIView(RetrieveAPIView):
-    def get(self, request, *args, **kwargs):
-        """
-        An endpoint that checks the heartbeat of the program
-        """
-        return Response(
-            data={"message": "Agenda API is running."}, status=status.HTTP_200_OK
-        )
-
-    def post(self, request, *args, **kwargs):
-        """
-        Test endpoint to debug request data format
-        """
-        return Response(
-            data={
-                "message": "Test endpoint - received data",
-                "data": request.data,
-                "headers": dict(request.headers),
-                "user_id": getattr(request, "user_id", None),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
 class CreateEventApiView(APIView):
     """
     Creates a local calendar event without Google Calendar integration (for testing)
@@ -137,6 +113,7 @@ class CreateEventApiView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            all_day = str(request.data.get("all_day", "false")).lower() == "true"
             # Parse start and end times
             start_time_str = request.data.get("start_time")
             end_time_str = request.data.get("end_time")
@@ -160,19 +137,28 @@ class CreateEventApiView(APIView):
                 "summary": event_summary,
                 "description": request.data.get("description", ""),
                 "location": request.data.get("location", ""),
-                "start": {
-                    "dateTime": parse_date_time_to_iso_format(start_time_str),
-                    "timeZone": request.data.get("timezone", "UTC"),
-                },
-                "end": {
-                    "dateTime": parse_date_time_to_iso_format(end_time_str),
-                    "timeZone": request.data.get("timezone", "UTC"),
-                },
                 "transparency": request.data.get("transparency", "opaque"),
                 "reminders": {
                     "useDefault": True,
                 },
             }
+
+            if all_day:
+                # Google Calendar requires `date` for all-day events
+                # Also, end.date must be the NEXT day since it's exclusive
+                start_date = start_time_str.split("T")[0]
+                end_date = end_time_str.split("T")[0]
+                event_body["start"] = {"date": start_date}
+                event_body["end"] = {"date": end_date}
+            else:
+                event_body["start"] = {
+                    "dateTime": parse_date_time_to_iso_format(start_time_str),
+                    "timeZone": request.data.get("timezone", "UTC"),
+                }
+                event_body["end"] = {
+                    "dateTime": parse_date_time_to_iso_format(end_time_str),
+                    "timeZone": request.data.get("timezone", "UTC"),
+                }
 
             # Add attendees if provided - handle Flutter format
             attendees = request.data.get("attendees", [])
@@ -223,15 +209,24 @@ class CreateEventApiView(APIView):
                 f"Successfully created event in Google Calendar: {created_event['id']}"
             )
 
+            if "dateTime" in created_event["start"]:
+                start_time = created_event["start"]["dateTime"]
+                end_time = created_event["end"]["dateTime"]
+                all_day_flag = False
+            else:
+                start_time = f"{created_event['start']['date']}T00:00:00Z"
+                end_time = f"{created_event['end']['date']}T00:00:00Z"
+                all_day_flag = True
+
             # NOW save the Google Calendar response to our database
             event_data = {
                 "id": created_event["id"],  # Use Google Calendar's event ID
                 "summary": created_event["summary"],
                 "description": created_event.get("description", ""),
                 "location": created_event.get("location", ""),
-                "start_time": created_event["start"]["dateTime"],
-                "end_time": created_event["end"]["dateTime"],
-                "all_day": "date" in created_event["start"],
+                "start_time": start_time,
+                "end_time": end_time,
+                "all_day": all_day_flag,
                 "timezone": created_event["start"].get("timeZone", "UTC"),
                 "status": created_event.get("status", "confirmed"),
                 "transparency": created_event.get("transparency", "opaque"),
