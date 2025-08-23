@@ -14,9 +14,13 @@ def retrieve_user_social_accounts(user_id: str) -> Union[List[dict[str, Any]], s
     url = f"{os.getenv('VERISAFE_BASE_URL')}/socials/user/{user_id}"
 
     try:
-        response = requests.get(url)
+        response = requests.get(
+            url, headers={"x-api-key": os.getenv("VERISAFE_API_KEY")}
+        )
+        response.raise_for_status()
         if response.status_code == 200:
             return response.json()
+
     except requests.exceptions.RequestException as e:
         return f"Request failed {str(e)}"
 
