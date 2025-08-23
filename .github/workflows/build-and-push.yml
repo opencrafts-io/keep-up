@@ -102,7 +102,7 @@ jobs:
           BRANCH=$(echo "${GITHUB_REF##*/}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
           SHA=$(git rev-parse --short HEAD)
 
-          if [ "$BRANCH" = "main" ]; then
+          if [ "$BRANCH" = "master" ]; then
             IMAGE_TAG="prod"
             IMAGE_BASE="${{ secrets.DOCKERHUB_USERNAME }}/keep-up-prod"
           else
