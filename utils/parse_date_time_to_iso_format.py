@@ -4,6 +4,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
 def parse_date_time_to_iso_format(raw_date: Optional[str]) -> Optional[str]:
     """
     Parses a raw date/time string (assumed to be ISO 8601) and formats it
@@ -22,28 +23,22 @@ def parse_date_time_to_iso_format(raw_date: Optional[str]) -> Optional[str]:
     if raw_date is None:
         # If the input is None, return the current UTC date and time
         now_utc = datetime.now(timezone.utc)
-        formatted_now = now_utc.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-        logger.debug(f"Input date was None, defaulting to current UTC time: {formatted_now}")
-        return formatted_now
+        return now_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
     try:
-        # 1. Parse the raw input string into a datetime object
+        # Normalize "Z" suffix into "+00:00" so fromisoformat can parse it
+        if raw_date.endswith("Z"):
+            raw_date = raw_date.replace("Z", "+00:00")
+
         dt_obj = datetime.fromisoformat(raw_date)
 
-        # 2. Ensure the datetime object is timezone-aware and in UTC
+        # Ensure UTC
         if dt_obj.tzinfo is None:
-            # If the input string is naive (no timezone info), assume it's UTC.
             dt_obj = dt_obj.replace(tzinfo=timezone.utc)
         else:
-            # If it's timezone-aware but not UTC, convert it to UTC.
             dt_obj = dt_obj.astimezone(timezone.utc)
 
-        # 3. Format as RFC 3339 timestamp: YYYY-MM-DDTHH:MM:SS.sssZ
-        # strftime ensures exactly 3 digits for milliseconds and 'Z' for UTC.
-        # '%f' gives microseconds, [:-3] truncates to milliseconds.
-        formatted_date = dt_obj.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-        return formatted_date
-
+        return dt_obj.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     except ValueError:
         logger.warning(
             f"Invalid date format provided to parse_date_time_to_iso_format: '{raw_date}'. "
@@ -52,5 +47,7 @@ def parse_date_time_to_iso_format(raw_date: Optional[str]) -> Optional[str]:
         # If the raw_date was provided but invalid, return None to signal an error
         return None
     except Exception as e:
-        logger.error(f"An unexpected error occurred during date parsing: {e}", exc_info=True)
+        logger.error(
+            f"An unexpected error occurred during date parsing: {e}", exc_info=True
+        )
         return None
