@@ -26,6 +26,7 @@ class EventSerializer(serializers.ModelSerializer):
             "reminders",
             "recurrence",
             "owner_id",
+            "deleted",
         ]
 
     def create(self, validated_data):

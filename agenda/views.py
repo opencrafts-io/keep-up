@@ -318,7 +318,6 @@ class ListEventsApiView(ListAPIView):
         sync_with_google = (
             self.request.query_params.get("sync", "false").lower() == "true"
         )
-        print(sync_with_google)
 
         queryset = Event.objects.filter(owner_id=user_id)
 
@@ -627,8 +626,19 @@ class DeleteEventApiView(DestroyAPIView):
                 data={"message": "Event deleted successfully."},
                 status=status.HTTP_200_OK,
             )
+        except HttpError as e:
+            # Delete if it was deleted already on google's side
+            if e.status_code == 410:
+                event.delete()
+
+            return Response(
+                data={"message": "Event deleted successfully."},
+                status=status.HTTP_200_OK,
+            )
 
         except Exception as e:
+            # Just delete the event whatsoever
+            event.delete()
             logger.error(
                 f"Error deleting Google Calendar Event: {str(e)}",
                 extra={"user_id": user_id},
