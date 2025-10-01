@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     # Package apps
     "safedelete",
     # Custom added apps
+    "users.apps.UsersConfig",
     "todos.apps.TodosConfig",
     "agenda.apps.AgendaConfig",
 ]
