@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "safedelete",
     # Custom added apps
     "users.apps.UsersConfig",
+    "event_bus",
     "todos.apps.TodosConfig",
     "agenda.apps.AgendaConfig",
 ]
@@ -80,6 +81,13 @@ LOGGING = {
         },
     },
 }
+
+# Rabbit mq setup
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", None)
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", None)
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", None)
+RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", None)
+RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", None)
 
 
 REST_FRAMEWORK = {
