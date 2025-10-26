@@ -561,7 +561,7 @@ class ListTodoApiView(ListAPIView):
 
                 # Prepare data for local database, aligning with model nullability
                 task_data_for_db = {
-                    "id": task_id,
+                    "external_id": task_id,
                     "kind": google_task.get("kind"),
                     "etag": google_task.get("etag"),
                     "title": google_task.get("title"),
@@ -582,7 +582,9 @@ class ListTodoApiView(ListAPIView):
                 }
 
                 try:
-                    local_task_instance = Task.objects.get(id=task_id, owner_id=user_id)
+                    local_task_instance = Task.objects.get(
+                        external_id=task_id, owner_id=user_id
+                    )
                     serializer = TaskSerializer(
                         instance=local_task_instance,
                         data=task_data_for_db,
@@ -613,7 +615,7 @@ class ListTodoApiView(ListAPIView):
             # Fetch all current local tasks for this user
             current_local_task_ids = set(
                 Task.objects.filter(owner_id=user_id, deleted=False).values_list(
-                    "id", flat=True
+                    "external_id", flat=True
                 )
             )
 
@@ -623,7 +625,7 @@ class ListTodoApiView(ListAPIView):
             if ids_to_mark_deleted:
                 # Update these tasks to marked as deleted in your local DB
                 deleted_count = Task.objects.filter(
-                    id__in=ids_to_mark_deleted, owner_id=user_id
+                    extenal_id__in=ids_to_mark_deleted, owner_id=user_id
                 ).update(deleted=True)
                 logger.info(
                     f"Marked {deleted_count} local tasks as deleted (no longer found in Google Tasks)."

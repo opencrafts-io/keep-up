@@ -8,6 +8,7 @@ class TaskSerializer(serializers.ModelSerializer):
         model = Task
         fields = [
             "id",
+            "external_id",
             "kind",
             "etag",
             "title",
