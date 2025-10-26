@@ -104,7 +104,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [],
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PAGINATION_CLASS": "keep_up.pagination.StandardResultsSetPagination",
-    "PAGE_SIZE": 50,
+    "PAGE_SIZE": 100,
 }
 
 MIDDLEWARE = [
