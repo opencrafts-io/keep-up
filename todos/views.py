@@ -1,9 +1,8 @@
 import logging
 import os
 import uuid
-from datetime import timezone, datetime
+from datetime import datetime
 from googleapiclient.http import HttpError
-from pythonjsonlogger.json import JsonFormatter
 from rest_framework.views import APIView, Response, status
 from rest_framework.generics import (
     CreateAPIView,
@@ -23,13 +22,7 @@ from googleapiclient.discovery import build
 from .serializers import TaskSerializer
 
 # Create your views here.
-logger = logging.getLogger()
-logger.setLevel(logging.ERROR)
-
-
-handler = logging.StreamHandler()
-handler.setFormatter(JsonFormatter())
-logger.addHandler(handler)
+logger = logging.getLogger("keep_up")
 
 
 class CustomTaskPagination(PageNumberPagination):

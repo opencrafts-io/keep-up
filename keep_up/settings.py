@@ -54,30 +54,40 @@ INSTALLED_APPS = [
 
 LOGGING = {
     "version": 1,
-    "disable_existing_loggers": True,  # Disable all default loggers
+    "disable_existing_loggers": True,
     "formatters": {
+        "standard": {"format": "%(asctime)s [%(levelname)s]- %(message)s"},
         "json": {
-            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
-            "format": "%(asctime)s %(name)s %(levelname)s %(message)s",
+            "()": "keep_up.log_formatter.StandardJSONLogFormatter",
         },
     },
     "handlers": {
-        "json_console": {
+        "console": {
             "level": "INFO",
-            "class": "logging.StreamHandler",  # Logs to console
-            "formatter": "json",  # Use JSON formatter
+            "class": "logging.StreamHandler",
+            "formatter": "json",
         },
     },
     "loggers": {
         "django": {
-            "handlers": ["json_console"],  # Log Django-related logs to JSON console
-            "level": "INFO",  # Set the log level to INFO for Django logs
-            "propagate": False,  # Don't propagate to root logger
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
         },
-        # Your custom application logger (if you need it)
+        "django.request": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.server": {
+            "handlers": [],
+            "level": "INFO",
+            "propagate": False,
+        },
         "keep_up": {
-            "handlers": ["json_console"],  # Use your JSON handler
-            "level": "DEBUG",  # Log level for your application
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }
@@ -99,6 +109,7 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "keep_up.middlewares.request_logging_middleware.RequestLoggingMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
