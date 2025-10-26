@@ -8,7 +8,6 @@ from rest_framework.generics import (
     CreateAPIView,
     DestroyAPIView,
     ListAPIView,
-    RetrieveAPIView,
     UpdateAPIView,
     get_object_or_404,
 )
@@ -22,14 +21,6 @@ from .serializers import TaskSerializer
 
 # Create your views here.
 logger = logging.getLogger("keep_up")
-
-
-class PingAPIView(RetrieveAPIView):
-    def get(self, request, *args, **kwargs):
-        """
-        An endpoint that checks the heartbeat of the program
-        """
-        return Response(data={"message": "He is risen."}, status=status.HTTP_200_OK)
 
 
 class CreateTodoApiView(CreateAPIView):

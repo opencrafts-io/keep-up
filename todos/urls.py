@@ -4,13 +4,11 @@ from todos.views import (
     CompleteTodoApiView,
     CreateTodoApiView,
     DeleteTaskAPIView,
-    PingAPIView,
     UpdateTodoApiView,
     ListTodoApiView,
 )
 
 urlpatterns = [
-    path("ping", PingAPIView.as_view(), name="ping"),
     path("add", CreateTodoApiView.as_view(), name="create-todo"),
     path("", ListTodoApiView.as_view(), name="retrieve-todos"),
     path("update/<str:task_id>", UpdateTodoApiView.as_view(), name="update-todo"),
