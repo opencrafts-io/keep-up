@@ -12,7 +12,6 @@ from rest_framework.generics import (
     UpdateAPIView,
     get_object_or_404,
 )
-from rest_framework.pagination import PageNumberPagination
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task
 from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
@@ -23,14 +22,6 @@ from .serializers import TaskSerializer
 
 # Create your views here.
 logger = logging.getLogger("keep_up")
-
-
-class CustomTaskPagination(PageNumberPagination):
-    page_size = 20  # Default number of tasks per page for your API
-    page_size_query_param = (
-        "page_size"  # Allows client to specify page size (e.g., ?page_size=50)
-    )
-    max_page_size = 100  # Maximum page size allowed
 
 
 class PingAPIView(RetrieveAPIView):
@@ -478,7 +469,6 @@ class ListTodoApiView(ListAPIView):
 
     authentication_classes = [VerisafeJWTAuthentication]
     serializer_class = TaskSerializer
-    pagination_class = CustomTaskPagination  # Apply the custom pagination class
 
     def get_queryset(self):
         user_id = getattr(self.request, "user_id", None)

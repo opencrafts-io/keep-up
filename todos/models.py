@@ -28,7 +28,7 @@ class Task(models.Model):
         "completed": "Completed",
     }
 
-    id = models.CharField(
+    external_id = models.CharField(
         max_length=255,
         primary_key=True,
     )
