@@ -8,9 +8,13 @@ class Task(models.Model):
         "completed": "Completed",
     }
 
+    id = models.UUIDField(
+        default=uuid.uuid4,
+        primary_key=True,
+    )
     external_id = models.CharField(
         max_length=255,
-        primary_key=True,
+        primary_key=False,
     )
     kind = models.CharField(
         blank=True,
