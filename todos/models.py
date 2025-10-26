@@ -2,26 +2,6 @@ import uuid
 from django.db import models
 
 
-# Create your models here.
-class AssignmentInfo(models.Model):
-    CONTEXT_TYPES = {
-        "CONTEXT_TYPE_UNSPECIFIED": "Unknown value for this task's context.",
-        "GMAIL": "The task is created from Gmail.",
-        "DOCUMENT": "The task is assigned from a document.",
-        "SPACE": " 	The task is assigned from a Chat Space.",
-    }
-
-    link_to_task = models.URLField()
-    surface_type = models.CharField(
-        max_length=64,
-        choices=CONTEXT_TYPES,
-    )
-
-    task = models.ForeignKey(
-        "Task", related_name="task_assignments", on_delete=models.CASCADE
-    )
-
-
 class Task(models.Model):
     TASK_STATUSES = {
         "needsAction": "Needs Action",
