@@ -117,7 +117,7 @@ class GoogleTasksService:
 
             # Create in Google Tasks
             created_task = (
-                service.task()
+                service.tasks()
                 .insert(
                     tasklist="@default",
                     body=google_task,
