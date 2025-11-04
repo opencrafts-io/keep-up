@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from .models import Task
-from django.utils import timezone
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -8,6 +7,7 @@ class TaskSerializer(serializers.ModelSerializer):
         model = Task
         fields = [
             "id",
+            "external_id",
             "kind",
             "etag",
             "title",
@@ -24,7 +24,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "web_view_link",
             "owner_id",
         ]
-        # read_only_fields = ["id", "updated", "completed", "web_view_link", "self_link"]
+        read_only_fields = ["id", "updated", "completed", "web_view_link", "self_link"]
 
     def create(self, validated_data):
         """
