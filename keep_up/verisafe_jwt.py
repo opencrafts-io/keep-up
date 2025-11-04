@@ -2,7 +2,6 @@ import jwt
 from jwt import ExpiredSignatureError, InvalidTokenError
 import os
 import logging
-from pythonjsonlogger.json import JsonFormatter
 
 # Load secret from environment or fallback default (never commit the default to code)
 VERISAFE_API_SECRET = os.getenv(
@@ -12,14 +11,7 @@ VERISAFE_API_SECRET = os.getenv(
 VERISAFE_ISSUER = "https://verisafe.opencrafts.io/"
 VERISAFE_AUDIENCE = "https://academia.opencrafts.io/"
 
-logger = logging.getLogger()
-logger.setLevel(logging.ERROR)
-
-
-handler = logging.StreamHandler()
-handler.setFormatter(JsonFormatter())
-logger.addHandler(handler)
-
+logger = logging.getLogger("django")
 
 def verify_verisafe_jwt(token: str):
     """
