@@ -1,8 +1,7 @@
-from rest_framework.generics import RetrieveAPIView
-from rest_framework.views import Response, status
+from rest_framework.views import APIView, Response, status
 
 
-class PingAPIView(RetrieveAPIView):
+class PingAPIView(APIView):
     def get(self, request, *args, **kwargs):
         """
         An endpoint that checks the heartbeat of the program

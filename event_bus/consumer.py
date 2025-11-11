@@ -1,4 +1,5 @@
 from time import time
+from typing import List
 import pika
 from django.conf import settings
 import logging
@@ -16,14 +17,18 @@ class BaseConsumer:
     def validate_event(
         self,
         event: dict,
-        expected_type: str,
         source_service: str = "io.opencrafts.verisafe",
     ) -> bool:
         """Validate event metadata."""
         metadata = event.get("meta", {})
-        if metadata.get("event_type") != expected_type:
+        expected_event_types: List[str] = [
+            "user.created",
+            "user.updated",
+            "user.deleted",
+        ]
+        if metadata.get("event_type") not in expected_event_types:
             self.logger.error(
-                f"[{str(type(self).__name__)}] Wrong event_type: expected {expected_type}, got {metadata.get('event_type')}",
+                f"[{str(type(self).__name__)}] Wrong event_type: expected values {expected_event_types}, got {metadata.get('event_type')}",
                 extra={
                     "abort": True,
                     "user_id": event.get("payload", {}).get("user_id"),
