@@ -1,4 +1,4 @@
-name: Build, Test, and Push keep-up Backend (Prod or Dev)
+name: Build, Push, and Update keepup Backend
 
 on:
   push:
@@ -6,74 +6,11 @@ on:
       - '**'
 
 jobs:
-  test:
+  build-push-update:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: keep-up_user
-          POSTGRES_PASSWORD: secretpassword
-          POSTGRES_DB: keep-up_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U keep-up_user -d keep-up_db"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      DB_USER: keep-up_user
-      DB_PASSWORD: secretpassword
-      DB_NAME: keep-up_db
-      DB_HOST: localhost
-      DB_PORT: 5432
-      PGUSER: keep-up_user
-      PGPASSWORD: secretpassword
-      PGDATABASE: keep-up_db
-      PGHOST: localhost
-      PGPORT: 5432
-      DJANGO_SETTINGS_MODULE: keep_up.settings
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Cache Python Dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libpq-dev
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Migrations
-        run: |
-          python manage.py migrate
-
-      - name: Run Tests
-        run: python manage.py test --verbosity=2
-
-  build-and-push:
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-      - name: Checkout Code
+      - name: Checkout keepup Repo
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -116,7 +53,7 @@ jobs:
       - name: Log in to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Build Docker image with Buildpacks
+      - name: Build keepup Image with Buildpacks
         run: |
           IMAGE_BASE=${{ steps.tags.outputs.image_base }}
           IMAGE_TAG=${{ steps.tags.outputs.image_tag }}
@@ -131,14 +68,74 @@ jobs:
 
           docker tag "$IMAGE_BASE:$IMAGE_TAG" "$IMAGE_BASE:$SHA_TAG"
 
-      - name: Push Docker images to Docker Hub
+      - name: Push keepup Images
         run: |
           IMAGE_BASE=${{ steps.tags.outputs.image_base }}
           IMAGE_TAG=${{ steps.tags.outputs.image_tag }}
           SHA_TAG=${{ steps.tags.outputs.sha_tag }}
 
-          echo "🚀 Pushing $IMAGE_BASE:$IMAGE_TAG"
+          echo "Pushing $IMAGE_BASE:$IMAGE_TAG"
           docker push "$IMAGE_BASE:$IMAGE_TAG"
 
-          echo "🚀 Pushing $IMAGE_BASE:$SHA_TAG"
+          echo "Pushing $IMAGE_BASE:$SHA_TAG"
           docker push "$IMAGE_BASE:$SHA_TAG"
+
+      - name: Checkout InfraOps Repo
+        uses: actions/checkout@v4
+        with:
+          repository: opencrafts-io/infraops
+          token: ${{ secrets.GH_TOKEN }}
+          ref: main
+          path: infraops
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Compute deployment file path
+        id: target
+        run: |
+          BRANCH="${GITHUB_REF_NAME#refs/heads/}"
+          if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+            FILE="infraops/services/keepup/deployment.yaml"
+          else
+            FILE="infraops/qaservices/keepup/deployment.yaml"
+          fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Deployment file: $FILE"
+
+      - name: Update deployment.yaml
+        run: |
+          FILE="${{ steps.target.outputs.file }}"
+          IMAGE="${{ steps.tags.outputs.image_base }}:${{ steps.tags.outputs.sha_tag }}"
+          echo "Updating $FILE with image: $IMAGE"
+          if [ ! -f "$FILE" ]; then
+            echo "ERROR: $FILE does not exist!"
+            ls -la "$(dirname $FILE)"
+            exit 1
+          fi
+          echo "Old image:"
+          yq eval '.spec.template.spec.containers[0].image' "$FILE"
+          yq eval ".spec.template.spec.containers[0].image = \"$IMAGE\"" -i "$FILE"
+          echo "New image:"
+          yq eval '.spec.template.spec.containers[0].image' "$FILE"
+
+      - name: Commit and push changes
+        run: |
+          cd infraops
+          IMAGE="${{ steps.tags.outputs.image_base }}:${{ steps.tags.outputs.sha_tag }}"
+          git config user.name "CI Bot from Github Actions"
+          git config user.email "actions@github.com"
+          
+          if [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "master" ]; then
+            FILE="services/keepup/deployment.yaml"
+          else
+            FILE="qaservices/keepup/deployment.yaml"
+          fi
+          
+          git add "$FILE"
+          git commit -m "chore: update keepup image to $IMAGE (${{ github.ref_name }})"
+          git push origin main
