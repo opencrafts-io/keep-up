@@ -3,7 +3,8 @@ name: Build, Push, and Update keepup Backend
 on:
   push:
     branches:
-      - '**'
+      - master
+      - staging
 
 jobs:
   build-push-update:

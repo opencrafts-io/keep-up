@@ -1,9 +1,9 @@
 name: Discord Push Notification
 
 on:
-  push:
+  pull_request:
     branches:
-      - "**"
+      - master
 
 jobs:
   notify-discord:
@@ -15,7 +15,7 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
           args: |
-            **@everyone stay alert because there is a deployment** 
+            **@here stay alert because there is a deployment to prod** 
             **New Push to ${{ github.repository }}**           
             **Pusher**: `${{ github.actor }}`
             **Branch**: `${{ github.ref_name }}`
