@@ -12,7 +12,7 @@ class User(models.Model):
     email = models.EmailField(max_length=255, null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
     username = models.CharField(max_length=100, null=True, blank=True)
-    avatar_url = models.URLField(max_length=500, null=True, blank=True)
+    avatar_url = models.URLField(max_length=1024, null=True, blank=True)
     vibe_points = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
