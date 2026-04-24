@@ -14,8 +14,8 @@ from rest_framework import status
 from rest_framework.generics import ListAPIView
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task, TaskList
-from todos.serializers import TaskListSerializer, TaskSerializer
-from .services import TaskListService
+from todos.serializers import TagSerializer, TaskListSerializer, TaskSerializer
+from .services import TaskListService, TagService
 from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
 
 logger = logging.getLogger("keep_up")
@@ -318,6 +318,98 @@ class DeleteTaskListView(BaseTaskView):
             return Response(
                 {"message": "An internal error occurred."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class TagListCreateView(BaseTaskView):
+    serializer_class = TagSerializer
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="List user tags",
+        description="Retrieves all tags created by the authenticated user.",
+        responses={200: TagSerializer(many=True)},
+    )
+    def get(self, request):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        tags = TagService.get_user_tags(user_id)
+        return Response(self.serializer_class(tags, many=True).data)
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="Create a tag",
+        description="Creates a new local tag. Names must be unique per user.",
+        request=TagSerializer,
+        responses={
+            201: TagSerializer,
+            400: OpenApiResponse(description="Validation error or duplicate name"),
+        },
+    )
+    def post(self, request):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        serializer = self.serializer_class(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tag = TagService.create_tag(owner_id=user_id, **serializer.validated_data)
+            return Response(
+                self.serializer_class(tag).data, status=status.HTTP_201_CREATED
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TagDetailView(BaseTaskView):
+    serializer_class = TagSerializer
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="Update a tag",
+        request=TagSerializer,
+        responses={200: TagSerializer, 404: OpenApiResponse(description="Not found")},
+    )
+    def patch(self, request, tag_id):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        serializer = self.serializer_class(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tag = TagService.update_tag(user_id, tag_id, **serializer.validated_data)
+            return Response(self.serializer_class(tag).data)
+        except Tag.DoesNotExist:
+            return Response(
+                {"message": "Tag not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="Delete a tag",
+        responses={204: OpenApiResponse(description="Deleted successfully")},
+    )
+    def delete(self, request, tag_id):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            TagService.delete_tag(user_id, tag_id)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Tag.DoesNotExist:
+            return Response(
+                {"message": "Tag not found"}, status=status.HTTP_404_NOT_FOUND
             )
 
 

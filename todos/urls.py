@@ -5,6 +5,8 @@ from todos.views import (
     CreateTodoApiView,
     DeleteTaskAPIView,
     DeleteTaskListView,
+    TagDetailView,
+    TagListCreateView,
     UpdateTaskListView,
     UpdateTodoApiView,
     ListTodoApiView,
@@ -41,6 +43,9 @@ urlpatterns = [
         DeleteTaskListView.as_view(),
         name="tasklist-delete",
     ),
+    # Tags..
+    path("tags/", TagListCreateView.as_view(), name="tag-list-create"),
+    path("tags/<uuid:tag_id>/", TagDetailView.as_view(), name="tag-detail"),
     # Todos
     path("add", CreateTodoApiView.as_view(), name="create"),
     path("", ListTodoApiView.as_view(), name="list"),

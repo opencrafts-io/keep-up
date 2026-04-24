@@ -1,6 +1,6 @@
 from rest_framework.test import APITestCase
 from django.urls import reverse
-from todos.models import TaskList
+from todos.models import Tag, TaskList
 from users.models import User
 from unittest.mock import patch
 from django.contrib.auth.models import AnonymousUser
@@ -169,3 +169,58 @@ class TaskListTests(APITestCase):
         self.assertIn("Cannot delete the default list", response.data["message"])
 
         self.assertFalse(TaskList.objects.get(id=list_id).deleted)
+
+
+class TagApiTests(APITestCase):
+    def setUp(self):
+        self.user_id = "8acbe501-43d6-48e3-a02f-7201a7447e91"
+        self.list_url = reverse("todos:tag-list-create")
+
+    def test_create_tag_api_success(self):
+        payload = {"name": "Urgent", "color": "#FF0000"}
+
+        with auth_patch(self.user_id):
+            response = self.client.post(self.list_url, data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["name"], "Urgent")
+
+    def test_create_duplicate_tag_returns_400(self):
+        with auth_patch(self.user_id):
+            self.client.post(self.list_url, data={"name": "Work"}, format="json")
+            response = self.client.post(
+                self.list_url, data={"name": "Work"}, format="json"
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("already exists", response.data["message"])
+
+    def test_update_tag_api_success(self):
+        tag = Tag.objects.create(owner_id=self.user_id, name="OldName")
+        url = reverse("todos:tag-detail", kwargs={"tag_id": tag.id})
+
+        with auth_patch(self.user_id):
+            response = self.client.patch(url, data={"name": "NewName"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["name"], "NewName")
+
+    def test_delete_tag_api_success(self):
+        tag = Tag.objects.create(owner_id=self.user_id, name="To Delete")
+        url = reverse("todos:tag-detail", kwargs={"tag_id": tag.id})
+
+        with auth_patch(self.user_id):
+            response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Tag.objects.filter(id=tag.id).exists())
+
+    def test_get_tags_api_success(self):
+        Tag.objects.create(owner_id=self.user_id, name="A-Tag")
+        Tag.objects.create(owner_id=self.user_id, name="B-Tag")
+
+        with auth_patch(self.user_id):
+            response = self.client.get(self.list_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
