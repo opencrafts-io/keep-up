@@ -6,13 +6,15 @@ Google Tasks sync is handled asynchronously via Celery workers (not yet implemen
 """
 
 import logging
+from django.db.models import ObjectDoesNotExist
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.generics import ListAPIView
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
-from todos.models import Task
-from todos.serializers import TaskSerializer
+from todos.models import Task, TaskList
+from todos.serializers import TaskListSerializer, TaskSerializer
+from .services import TaskListService
 from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
 
 logger = logging.getLogger("keep_up")
@@ -43,6 +45,207 @@ class BaseTaskView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return user_id, None
+
+
+class CreateTaskListView(BaseTaskView):
+    """
+    Creates a task list.
+    """
+
+    serializer_class = TaskListSerializer
+
+    def post(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        serializer = self.serializer_class(data=request.data)
+        if not serializer.is_valid():
+            return Response(data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            task_list = TaskListService().create_task_list(
+                owner_id=user_id, **serializer.validated_data
+            )
+
+            return Response(
+                data=self.serializer_class(task_list).data,
+                status=status.HTTP_201_CREATED,
+            )
+
+        except ValueError as e:
+            return Response(
+                data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception("Unexpected error creating task list")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RetrieveTaskLists(BaseTaskView):
+    """Retrieves user task lists from the DB"""
+
+    serializer_class = TaskListSerializer
+
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task_list = TaskListService().get_user_lists(owner_id=user_id)
+
+            return Response(
+                data=self.serializer_class(task_list, many=True).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except ValueError as e:
+            return Response(
+                data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception("Unexpected error creating task list")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RetrieveOrCreateUserDefaultTaskList(BaseTaskView):
+
+    serializer_class = TaskListSerializer
+
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task_list = TaskListService().get_or_create_default_list(owner_id=user_id)
+
+            return Response(
+                data=self.serializer_class(task_list).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except ValueError as e:
+            return Response(
+                data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception("Unexpected error creating task list")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RetrieveTaskListByIDView(BaseTaskView):
+    serializer_class = TaskListSerializer
+
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        list_id = kwargs.get("list_id")
+        if not list_id:
+            return Response(
+                {"message": "Task list ID is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            task_list = TaskListService.get_task_list(owner_id=user_id, list_id=list_id)
+
+            return Response(
+                data=self.serializer_class(task_list).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except (ObjectDoesNotExist, ValueError):
+            return Response(
+                data={"message": "Task list not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            logger.exception(f"Error retrieving task list {list_id}")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class UpdateTaskListView(BaseTaskView):
+    """Updates an existing task list."""
+
+    serializer_class = TaskListSerializer
+
+    def patch(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        list_id = kwargs.get("list_id")
+
+        try:
+            instance = TaskListService.get_task_list(owner_id=user_id, list_id=list_id)
+
+            serializer = self.serializer_class(
+                instance, data=request.data, partial=True, context={"owner_id": user_id}
+            )
+
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            updated_list = TaskListService.update_task_list(
+                owner_id=user_id, list_id=list_id, **serializer.validated_data
+            )
+
+            return Response(self.serializer_class(updated_list).data)
+
+        except (TaskList.DoesNotExist, ObjectDoesNotExist):
+            return Response(
+                {"message": "Task list not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception(f"Error updating task list {list_id}")
+            return Response({"message": "Internal error."}, status=500)
+
+
+class DeleteTaskListView(BaseTaskView):
+    """Soft-deletes a task list and its associated tasks."""
+
+    def delete(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        list_id = kwargs.get("list_id")
+
+        try:
+            TaskListService.delete_task_list(owner_id=user_id, list_id=list_id)
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except (TaskList.DoesNotExist, ObjectDoesNotExist):
+            return Response(
+                {"message": "Task list not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception(f"Error deleting task list {list_id}")
+            return Response(
+                {"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class CreateTodoApiView(BaseTaskView):
