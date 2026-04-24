@@ -1,6 +1,7 @@
 from django.test import TestCase
-from todos.models import SyncStatus
+from todos.models import SyncStatus, Tag
 from .task_list_service import TaskListService
+from .tag_service import TagService
 from users.models import User
 
 
@@ -132,3 +133,70 @@ class TaskListServiceTest(TestCase):
 
         self.assertIsNotNone(synced_default_list)
         self.assertEqual(synced_default_list.sync_status, SyncStatus.FAILED)
+
+
+class TagServiceTest(TestCase):
+    def setUp(self) -> None:
+        self.test_user = User.objects.create(name="Test User")
+        self.user_id = str(self.test_user.user_id)
+        self.tag_service = TagService()
+        return super().setUp()
+
+    def test_create_tag_success(self):
+        tag = self.tag_service.create_tag(self.user_id, "Art", color="#E16E92")
+        self.assertEqual(tag.name, "Art")
+        self.assertEqual(tag.color, "#E16E92")
+        self.assertEqual(Tag.objects.count(), 1)
+
+    def test_create_tag_empty_name_fails(self):
+        with self.assertRaises(ValueError) as cm:
+            self.tag_service.create_tag(self.user_id, "  ")
+        self.assertEqual(str(cm.exception), "Tag name cannot be empty.")
+
+    def test_create_tag_duplicate_name_fails(self):
+        self.tag_service.create_tag(self.user_id, "Work")
+
+        with self.assertRaises(ValueError) as cm:
+            self.tag_service.create_tag(self.user_id, "Work")
+        self.assertIn("already exists", str(cm.exception))
+
+    def test_update_tag_success(self):
+        tag = self.tag_service.create_tag(self.user_id, "Old Name")
+
+        updated_tag = self.tag_service.update_tag(
+            self.user_id, tag.id, name="New Name", color="#000000"
+        )
+
+        self.assertEqual(updated_tag.name, "New Name")
+        self.assertEqual(updated_tag.color, "#000000")
+
+    def test_update_tag_duplicate_name_fails(self):
+        self.tag_service.create_tag(self.user_id, "Tag1")
+        tag2 = self.tag_service.create_tag(self.user_id, "Tag2")
+
+        with self.assertRaises(ValueError):
+            self.tag_service.update_tag(self.user_id, tag2.id, name="Tag1")
+
+    def test_update_tag_wrong_owner_fails(self):
+        other_user = User.objects.create(name="Other")
+        tag = self.tag_service.create_tag(self.user_id, "My Tag")
+
+        with self.assertRaises(Tag.DoesNotExist):
+            self.tag_service.update_tag(str(other_user.user_id), tag.id, name="Steal")
+
+    def test_delete_tag_success(self):
+        tag = self.tag_service.create_tag(self.user_id, "DeleteMe")
+        self.assertEqual(Tag.objects.count(), 1)
+
+        self.tag_service.delete_tag(self.user_id, tag.id)
+        self.assertEqual(Tag.objects.count(), 0)
+
+    def test_get_user_tags_ordering(self):
+        self.tag_service.create_tag(self.user_id, "C")
+        self.tag_service.create_tag(self.user_id, "A")
+        self.tag_service.create_tag(self.user_id, "B")
+
+        tags = self.tag_service.get_user_tags(self.user_id)
+        names = [t.name for t in tags]
+
+        self.assertEqual(names, ["A", "B", "C"])
