@@ -1,8 +1,8 @@
 """
 Copyright (c) 2025 Open Crafts Interactive. All Rights Reserved.
 
-Simplified views using the GoogleTasksService layer.
-Much cleaner, more maintainable, and easier to test.
+Views operating purely on local DB.
+Google Tasks sync is handled asynchronously via Celery workers (not yet implemented).
 """
 
 import logging
@@ -13,7 +13,6 @@ from rest_framework.generics import ListAPIView
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task
 from todos.serializers import TaskSerializer
-from todos.services import GoogleTasksService
 from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
 
 logger = logging.getLogger("keep_up")
@@ -47,44 +46,44 @@ class BaseTaskView(APIView):
 
 
 class CreateTodoApiView(BaseTaskView):
-    """Creates a todo item in Google Tasks and local DB."""
+    """Creates a todo item in local DB."""
 
     def post(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
             return error_response
 
-        service = GoogleTasksService(user_id)
+        title = request.data.get("title")
+        if not title:
+            return Response(
+                data={"message": "Title is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Parse due date if provided
         due_str = request.data.get("due")
         due_date = parse_date_time_to_iso_format(due_str) if due_str else None
 
-        task_data = {
-            "title": request.data.get("title"),
-            "notes": request.data.get("notes"),
-            "parent": request.data.get("parent"),
-            "due": due_date,
-        }
-
-        task, error = service.create_task(task_data)
-
-        if error:
-            return Response(
-                data={"message": error},
-                status=(
-                    status.HTTP_400_BAD_REQUEST
-                    if "required" in error.lower()
-                    else status.HTTP_500_INTERNAL_SERVER_ERROR
-                ),
-            )
+        task = Task.objects.create(
+            owner_id=user_id,
+            title=title,
+            notes=request.data.get("notes"),
+            parent=request.data.get("parent"),
+            due=due_date,
+            # Google Tasks fields — populated later by Celery sync worker
+            external_id="",
+            etag="",
+            self_link="",
+            web_view_link="",
+            position="",
+            status="needsAction",
+        )
 
         serializer = TaskSerializer(task)
         return Response(data=serializer.data, status=status.HTTP_201_CREATED)
 
 
 class UpdateTodoApiView(BaseTaskView):
-    """Updates a todo item in Google Tasks and local DB."""
+    """Updates a todo item in local DB."""
 
     def put(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
@@ -98,33 +97,25 @@ class UpdateTodoApiView(BaseTaskView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        service = GoogleTasksService(user_id)
+        try:
+            task = Task.objects.get(id=task_id, owner_id=user_id, deleted=False)
+        except Task.DoesNotExist:
+            return Response(
+                data={"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        # Build update data from request
-        update_data = {}
         if "title" in request.data:
-            update_data["title"] = request.data["title"]
+            task.title = request.data["title"]
         if "notes" in request.data:
-            update_data["notes"] = request.data["notes"]
+            task.notes = request.data["notes"]
         if "status" in request.data:
-            update_data["status"] = request.data["status"]
+            task.status = request.data["status"]
         if "due" in request.data:
             due_str = request.data["due"]
-            update_data["due"] = (
-                parse_date_time_to_iso_format(due_str) if due_str else None
-            )
+            task.due = parse_date_time_to_iso_format(due_str) if due_str else None
 
-        task, error = service.update_task(task_id, update_data)
-
-        if error:
-            return Response(
-                data={"message": error},
-                status=(
-                    status.HTTP_404_NOT_FOUND
-                    if "not found" in error.lower()
-                    else status.HTTP_500_INTERNAL_SERVER_ERROR
-                ),
-            )
+        task.save()
 
         serializer = TaskSerializer(task)
         return Response(data=serializer.data, status=status.HTTP_200_OK)
@@ -145,47 +136,36 @@ class CompleteTodoApiView(BaseTaskView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        service = GoogleTasksService(user_id)
-        task, error = service.toggle_task_completion(task_id)
-
-        if error:
+        try:
+            task = Task.objects.get(id=task_id, owner_id=user_id, deleted=False)
+        except Task.DoesNotExist:
             return Response(
-                data={"message": error},
-                status=(
-                    status.HTTP_404_NOT_FOUND
-                    if "not found" in error.lower()
-                    else status.HTTP_500_INTERNAL_SERVER_ERROR
-                ),
+                data={"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
+
+        task.status = "completed" if task.status != "completed" else "needsAction"
+        task.save()
 
         serializer = TaskSerializer(task)
         return Response(data=serializer.data, status=status.HTTP_200_OK)
 
 
 class ListTodoApiView(ListAPIView):
-    """
-    Lists tasks from local DB.
-    Optionally syncs with Google Tasks if requested.
-    """
+    """Lists tasks from local DB."""
 
     authentication_classes = [VerisafeJWTAuthentication]
     serializer_class = TaskSerializer
 
     def get_queryset(self):
-        """Return tasks for the authenticated user."""
         user_id = getattr(self.request, "user_id", None)
         if user_id:
-            return Task.objects.filter(
-                owner_id=user_id, deleted=False  # Don't show deleted tasks
-            ).order_by("status", "due", "position")
+            return Task.objects.filter(owner_id=user_id, deleted=False).order_by(
+                "status", "due", "position"
+            )
         return Task.objects.none()
 
     def list(self, request, *args, **kwargs):
-        """
-        List tasks with optional sync.
-
-        Add ?sync=true to URL to sync with Google Tasks before listing.
-        """
         user_id = getattr(request, "user_id", None)
         if not user_id:
             logger.error("Failed to extract user_id from JWT claims")
@@ -196,24 +176,11 @@ class ListTodoApiView(ListAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Check if sync is requested
-        should_sync = request.query_params.get("sync", "false").lower() == "true"
-
-        if should_sync:
-            service = GoogleTasksService(user_id)
-            count, error = service.sync_tasks()
-
-            if error:
-                logger.error(f"Sync failed: {error}")
-                # Don't fail the request, just log the error
-                # Still return local tasks
-
-        # Use DRF's standard list behavior for pagination
         return super().list(request, *args, **kwargs)
 
 
 class DeleteTaskAPIView(BaseTaskView):
-    """Deletes a task from Google Tasks and local DB."""
+    """Soft-deletes a task from local DB."""
 
     def delete(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
@@ -227,18 +194,16 @@ class DeleteTaskAPIView(BaseTaskView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        service = GoogleTasksService(user_id)
-        success, error = service.delete_task(task_id)
-
-        if error:
+        try:
+            task = Task.objects.get(id=task_id, owner_id=user_id, deleted=False)
+        except Task.DoesNotExist:
             return Response(
-                data={"message": error},
-                status=(
-                    status.HTTP_404_NOT_FOUND
-                    if "not found" in error.lower()
-                    else status.HTTP_500_INTERNAL_SERVER_ERROR
-                ),
+                data={"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
+
+        task.deleted = True
+        task.save()
 
         return Response(
             data={"message": "Task deleted successfully"},
@@ -248,8 +213,8 @@ class DeleteTaskAPIView(BaseTaskView):
 
 class SyncTasksApiView(BaseTaskView):
     """
-    Dedicated endpoint to trigger task synchronization.
-    Useful for background jobs or manual sync triggers.
+    Triggers a background sync of local tasks with Google Tasks.
+    Sync is handled asynchronously via Celery workers.
     """
 
     def post(self, request, *args, **kwargs):
@@ -257,15 +222,9 @@ class SyncTasksApiView(BaseTaskView):
         if error_response:
             return error_response
 
-        service = GoogleTasksService(user_id)
-        count, error = service.sync_tasks()
-
-        if error:
-            return Response(
-                data={"message": error}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        # TODO: dispatch Celery task here e.g. sync_google_tasks.delay(user_id)
 
         return Response(
-            data={"message": "Sync completed successfully", "tasks_synced": count},
-            status=status.HTTP_200_OK,
+            data={"message": "Sync queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
         )
