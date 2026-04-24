@@ -7,6 +7,7 @@ Google Tasks sync is handled asynchronously via Celery workers (not yet implemen
 
 import logging
 from django.db.models import ObjectDoesNotExist
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -54,6 +55,17 @@ class CreateTaskListView(BaseTaskView):
 
     serializer_class = TaskListSerializer
 
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Create a task list",
+        description="Creates a new task list for the authenticated user.",
+        request=TaskListSerializer,
+        responses={
+            201: TaskListSerializer,
+            400: OpenApiResponse(description="Validation error"),
+            500: OpenApiResponse(description="Internal server error"),
+        },
+    )
     def post(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
@@ -90,6 +102,12 @@ class RetrieveTaskLists(BaseTaskView):
 
     serializer_class = TaskListSerializer
 
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Get all task lists",
+        description="Retrieve all task lists for the authenticated user.",
+        responses={200: TaskListSerializer(many=True)},
+    )
     def get(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
@@ -119,6 +137,12 @@ class RetrieveOrCreateUserDefaultTaskList(BaseTaskView):
 
     serializer_class = TaskListSerializer
 
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Get or create default task list",
+        description="Returns the user's default task list. Creates one if it doesn't exist.",
+        responses={200: TaskListSerializer},
+    )
     def get(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
@@ -147,6 +171,12 @@ class RetrieveOrCreateUserDefaultTaskList(BaseTaskView):
 class RetrieveTaskListByIDView(BaseTaskView):
     serializer_class = TaskListSerializer
 
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Get or create default task list",
+        description="Returns the user's default task list. Creates one if it doesn't exist.",
+        responses={200: TaskListSerializer},
+    )
     def get(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
@@ -185,6 +215,30 @@ class UpdateTaskListView(BaseTaskView):
 
     serializer_class = TaskListSerializer
 
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Update a task list",
+        description=(
+            "Partially update a task list. "
+            "Only editable fields will be updated. "
+            "Protected fields (e.g. sync_status) are ignored."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="list_id",
+                description="UUID of the task list",
+                required=True,
+                type=str,
+                location=OpenApiParameter.PATH,
+            )
+        ],
+        request=TaskListSerializer,
+        responses={
+            200: TaskListSerializer,
+            400: OpenApiResponse(description="Validation error"),
+            404: OpenApiResponse(description="Task list not found"),
+        },
+    )
     def patch(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
@@ -222,6 +276,25 @@ class UpdateTaskListView(BaseTaskView):
 class DeleteTaskListView(BaseTaskView):
     """Soft-deletes a task list and its associated tasks."""
 
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Delete a task list",
+        description="Soft deletes a task list and its associated tasks.",
+        parameters=[
+            OpenApiParameter(
+                name="list_id",
+                description="UUID of the task list",
+                required=True,
+                type=str,
+                location=OpenApiParameter.PATH,
+            )
+        ],
+        responses={
+            204: OpenApiResponse(description="Deleted successfully"),
+            400: OpenApiResponse(description="Cannot delete default list"),
+            404: OpenApiResponse(description="Task list not found"),
+        },
+    )
     def delete(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
