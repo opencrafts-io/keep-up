@@ -6,13 +6,16 @@ Google Tasks sync is handled asynchronously via Celery workers (not yet implemen
 """
 
 import logging
+from django.db.models import ObjectDoesNotExist
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.generics import ListAPIView
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
-from todos.models import Task
-from todos.serializers import TaskSerializer
+from todos.models import Task, TaskList
+from todos.serializers import TagSerializer, TaskListSerializer, TaskSerializer
+from .services import TaskListService, TagService
 from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
 
 logger = logging.getLogger("keep_up")
@@ -43,6 +46,386 @@ class BaseTaskView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return user_id, None
+
+
+class CreateTaskListView(BaseTaskView):
+    """
+    Creates a task list.
+    """
+
+    serializer_class = TaskListSerializer
+
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Create a task list",
+        description="Creates a new task list for the authenticated user.",
+        request=TaskListSerializer,
+        responses={
+            201: TaskListSerializer,
+            400: OpenApiResponse(description="Validation error"),
+            500: OpenApiResponse(description="Internal server error"),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        serializer = self.serializer_class(
+            data=request.data, context={"owner_id": user_id}
+        )
+        if not serializer.is_valid():
+            return Response(data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            task_list = TaskListService().create_task_list(
+                owner_id=user_id, **serializer.validated_data
+            )
+
+            return Response(
+                data=self.serializer_class(task_list).data,
+                status=status.HTTP_201_CREATED,
+            )
+
+        except ValueError as e:
+            return Response(
+                data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception("Unexpected error creating task list")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RetrieveTaskLists(BaseTaskView):
+    """Retrieves user task lists from the DB"""
+
+    serializer_class = TaskListSerializer
+
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Get all task lists",
+        description="Retrieve all task lists for the authenticated user.",
+        responses={200: TaskListSerializer(many=True)},
+    )
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task_list = TaskListService().get_user_lists(owner_id=user_id)
+
+            return Response(
+                data=self.serializer_class(task_list, many=True).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except ValueError as e:
+            return Response(
+                data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception("Unexpected error retrieving task lists")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RetrieveOrCreateUserDefaultTaskList(BaseTaskView):
+
+    serializer_class = TaskListSerializer
+
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Get or create default task list",
+        description="Returns the user's default task list. Creates one if it doesn't exist.",
+        responses={200: TaskListSerializer},
+    )
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task_list = TaskListService().get_or_create_default_list(owner_id=user_id)
+
+            return Response(
+                data=self.serializer_class(task_list).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except ValueError as e:
+            return Response(
+                data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception("Unexpected error creating task list")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RetrieveTaskListByIDView(BaseTaskView):
+    serializer_class = TaskListSerializer
+
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Get a task list by ID",
+        description="Retrieve a specific task list owned by the authenticated user.",
+        parameters=[
+            OpenApiParameter(
+                name="list_id",
+                description="UUID of the task list",
+                required=True,
+                type=str,
+                location=OpenApiParameter.PATH,
+            )
+        ],
+        responses={
+            200: TaskListSerializer,
+            400: OpenApiResponse(description="Missing list_id"),
+            404: OpenApiResponse(description="Task list not found"),
+        },
+    )
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        list_id = kwargs.get("list_id")
+        if not list_id:
+            return Response(
+                {"message": "Task list ID is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            task_list = TaskListService.get_task_list(owner_id=user_id, list_id=list_id)
+
+            return Response(
+                data=self.serializer_class(task_list).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except (ObjectDoesNotExist, ValueError):
+            return Response(
+                data={"message": "Task list not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            logger.exception(f"Error retrieving task list {list_id}")
+            return Response(
+                data={"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class UpdateTaskListView(BaseTaskView):
+    """Updates an existing task list."""
+
+    serializer_class = TaskListSerializer
+
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Update a task list",
+        description=(
+            "Partially update a task list. "
+            "Only editable fields will be updated. "
+            "Protected fields (e.g. sync_status) are ignored."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="list_id",
+                description="UUID of the task list",
+                required=True,
+                type=str,
+                location=OpenApiParameter.PATH,
+            )
+        ],
+        request=TaskListSerializer,
+        responses={
+            200: TaskListSerializer,
+            400: OpenApiResponse(description="Validation error"),
+            404: OpenApiResponse(description="Task list not found"),
+        },
+    )
+    def patch(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        list_id = kwargs.get("list_id")
+
+        try:
+            instance = TaskListService.get_task_list(owner_id=user_id, list_id=list_id)
+
+            serializer = self.serializer_class(
+                instance, data=request.data, partial=True, context={"owner_id": user_id}
+            )
+
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            updated_list = TaskListService.update_task_list(
+                owner_id=user_id, list_id=list_id, **serializer.validated_data
+            )
+
+            return Response(self.serializer_class(updated_list).data)
+
+        except (TaskList.DoesNotExist, ObjectDoesNotExist):
+            return Response(
+                {"message": "Task list not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception(f"Error updating task list {list_id}")
+            return Response({"message": "Internal error."}, status=500)
+
+
+class DeleteTaskListView(BaseTaskView):
+    """Soft-deletes a task list and its associated tasks."""
+
+    @extend_schema(
+        tags=["Task Lists"],
+        summary="Delete a task list",
+        description="Soft deletes a task list and its associated tasks.",
+        parameters=[
+            OpenApiParameter(
+                name="list_id",
+                description="UUID of the task list",
+                required=True,
+                type=str,
+                location=OpenApiParameter.PATH,
+            )
+        ],
+        responses={
+            204: OpenApiResponse(description="Deleted successfully"),
+            400: OpenApiResponse(description="Cannot delete default list"),
+            404: OpenApiResponse(description="Task list not found"),
+        },
+    )
+    def delete(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        list_id = kwargs.get("list_id")
+
+        try:
+            TaskListService.delete_task_list(owner_id=user_id, list_id=list_id)
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except (TaskList.DoesNotExist, ObjectDoesNotExist):
+            return Response(
+                {"message": "Task list not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception(f"Error deleting task list {list_id}")
+            return Response(
+                {"message": "An internal error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class TagListCreateView(BaseTaskView):
+    serializer_class = TagSerializer
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="List user tags",
+        description="Retrieves all tags created by the authenticated user.",
+        responses={200: TagSerializer(many=True)},
+    )
+    def get(self, request):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        tags = TagService.get_user_tags(user_id)
+        return Response(self.serializer_class(tags, many=True).data)
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="Create a tag",
+        description="Creates a new local tag. Names must be unique per user.",
+        request=TagSerializer,
+        responses={
+            201: TagSerializer,
+            400: OpenApiResponse(description="Validation error or duplicate name"),
+        },
+    )
+    def post(self, request):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        serializer = self.serializer_class(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tag = TagService.create_tag(owner_id=user_id, **serializer.validated_data)
+            return Response(
+                self.serializer_class(tag).data, status=status.HTTP_201_CREATED
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TagDetailView(BaseTaskView):
+    serializer_class = TagSerializer
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="Update a tag",
+        request=TagSerializer,
+        responses={200: TagSerializer, 404: OpenApiResponse(description="Not found")},
+    )
+    def patch(self, request, tag_id):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        serializer = self.serializer_class(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tag = TagService.update_tag(user_id, tag_id, **serializer.validated_data)
+            return Response(self.serializer_class(tag).data)
+        except Tag.DoesNotExist:
+            return Response(
+                {"message": "Tag not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        tags=["Tags"],
+        summary="Delete a tag",
+        responses={204: OpenApiResponse(description="Deleted successfully")},
+    )
+    def delete(self, request, tag_id):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            TagService.delete_tag(user_id, tag_id)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Tag.DoesNotExist:
+            return Response(
+                {"message": "Tag not found"}, status=status.HTTP_404_NOT_FOUND
+            )
 
 
 class CreateTodoApiView(BaseTaskView):

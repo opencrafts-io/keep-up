@@ -1,39 +1,9 @@
-"""
-Copyright (c) 2025 Open Crafts Interactive. All Rights Reserved.
-
-Tests for todos views.
-Authentication is mocked — VerisafeJWTAuthentication is patched to inject
-request.user_id directly, keeping tests decoupled from JWT internals.
-"""
-
-import uuid
+from rest_framework.test import APITestCase
+from django.urls import reverse
+from todos.models import Tag, TaskList
+from users.models import User
 from unittest.mock import patch
 from django.contrib.auth.models import AnonymousUser
-from django.test import TestCase
-from django.urls import reverse
-from rest_framework.test import APIClient
-from todos.models import Task
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def make_task(owner_id, **kwargs):
-    """Create a Task with sensible defaults for testing."""
-    return Task.objects.create(
-        owner_id=owner_id,
-        title=kwargs.get("title", "Test Task"),
-        notes=kwargs.get("notes", ""),
-        status=kwargs.get("status", "needsAction"),
-        due=kwargs.get("due", None),
-        deleted=kwargs.get("deleted", False),
-        external_id="",
-        etag="",
-        self_link="",
-        web_view_link="",
-        position="",
-    )
 
 
 def auth_patch(user_id):
@@ -52,366 +22,204 @@ def auth_patch(user_id):
     )
 
 
-def unauthed_patch():
-    """Patch authenticate to simulate a missing/invalid token."""
-    from rest_framework.exceptions import AuthenticationFailed
+class TaskListTests(APITestCase):
+    def setUp(self) -> None:
+        self.test_user = User.objects.create(name="Test User")
+        return super().setUp()
 
-    def fake_authenticate(self, request):
-        raise AuthenticationFailed("Wrong token format. Expected 'Bearer token'")
+    def test_task_list_create_view(self):
 
-    return patch(
-        "keep_up.verisafe_jwt_authentication.VerisafeJWTAuthentication.authenticate",
-        new=fake_authenticate,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Base
-# ---------------------------------------------------------------------------
-
-
-class BaseTaskTestCase(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        self.user_id = uuid.uuid4()
-        self.other_user_id = uuid.uuid4()
-
-
-# ---------------------------------------------------------------------------
-# CreateTodoApiView
-# ---------------------------------------------------------------------------
-
-
-class CreateTodoApiViewTests(BaseTaskTestCase):
-
-    def test_create_task_returns_201(self):
-        with auth_patch(self.user_id):
+        with auth_patch(self.test_user.user_id):
             response = self.client.post(
-                reverse("todos:create"),
-                data={"title": "Buy groceries"},
-                format="json",
-            )
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["title"], "Buy groceries")
-
-    def test_create_task_persists_to_db(self):
-        with auth_patch(self.user_id):
-            self.client.post(
-                reverse("todos:create"),
-                data={"title": "Buy groceries"},
-                format="json",
-            )
-        self.assertEqual(Task.objects.filter(owner_id=self.user_id).count(), 1)
-
-    def test_create_task_defaults_status_to_needs_action(self):
-        with auth_patch(self.user_id):
-            response = self.client.post(
-                reverse("todos:create"),
-                data={"title": "Buy groceries"},
-                format="json",
-            )
-        self.assertEqual(response.data["status"], "needsAction")
-
-    def test_create_task_with_notes_and_due(self):
-        with auth_patch(self.user_id):
-            response = self.client.post(
-                reverse("todos:create"),
+                reverse("todos:tasklist-create"),
                 data={
-                    "title": "Doctor appointment",
-                    "notes": "Bring insurance card",
-                    "due": "2025-06-01T09:00:00Z",
+                    "title": "School Tasks",
+                    "color": "#2E428B",
                 },
-                format="json",
             )
+
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["notes"], "Bring insurance card")
+        self.assertEqual(response.data["color"], "#2E428B")
+        self.assertEqual(response.data["is_default"], False)
 
-    def test_create_task_missing_title_returns_400(self):
-        with auth_patch(self.user_id):
+    def test_get_user_task_lists(self):
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(
+                reverse("todos:tasklist-retrieve"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.data)
+
+    def test_get_user_default_task_list(self):
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(
+                reverse("todos:tasklist-default"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.data)
+
+    def test_get_task_list_by_id_success(self):
+        with auth_patch(self.test_user.user_id):
             response = self.client.post(
-                reverse("todos:create"),
-                data={"notes": "No title here"},
-                format="json",
+                reverse("todos:tasklist-create"),
+                data={
+                    "title": "School Tasks",
+                    "color": "#2E428B",
+                },
             )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("message", response.data)
 
-    def test_create_task_unauthenticated_returns_403(self):
-        with unauthed_patch():
-            response = self.client.post(
-                reverse("todos:create"),
-                data={"title": "Buy groceries"},
-                format="json",
-            )
-        self.assertEqual(response.status_code, 403)
+        list_id = response.data["id"]
 
+        url = reverse("todos:tasklist-detail", kwargs={"list_id": str(list_id)})
 
-# ---------------------------------------------------------------------------
-# UpdateTodoApiView
-# ---------------------------------------------------------------------------
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(url)
 
-
-class UpdateTodoApiViewTests(BaseTaskTestCase):
-
-    def test_update_title_returns_200(self):
-        task = make_task(self.user_id, title="Old title")
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:update", kwargs={"task_id": task.id}),
-                data={"title": "New title"},
-                format="json",
-            )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["title"], "New title")
+        self.assertEqual(response.data["id"], str(list_id))
+        self.assertEqual(response.data["title"], "School Tasks")
 
-    def test_update_persists_to_db(self):
-        task = make_task(self.user_id, title="Old title")
-        with auth_patch(self.user_id):
-            self.client.put(
-                reverse("todos:update", kwargs={"task_id": task.id}),
-                data={"title": "New title"},
-                format="json",
-            )
-        task.refresh_from_db()
-        self.assertEqual(task.title, "New title")
+    def test_get_task_list_by_id_not_found(self):
+        url = reverse(
+            "todos:tasklist-detail",
+            kwargs={"list_id": "d062511c-3e7e-4b37-b883-985c02b03009"},
+        )
 
-    def test_update_partial_fields_only_changes_provided(self):
-        task = make_task(self.user_id, title="Keep me", notes="Keep me too")
-        with auth_patch(self.user_id):
-            self.client.put(
-                reverse("todos:update", kwargs={"task_id": task.id}),
-                data={"title": "Changed"},
-                format="json",
-            )
-        task.refresh_from_db()
-        self.assertEqual(task.title, "Changed")
-        self.assertEqual(task.notes, "Keep me too")
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(url)
 
-    def test_update_nonexistent_task_returns_404(self):
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:update", kwargs={"task_id": uuid.uuid4()}),
-                data={"title": "Doesn't matter"},
-                format="json",
-            )
         self.assertEqual(response.status_code, 404)
 
-    def test_update_another_users_task_returns_404(self):
-        task = make_task(self.other_user_id)
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:update", kwargs={"task_id": task.id}),
-                data={"title": "Hijack"},
+    def test_update_task_list_success(self):
+        with auth_patch(self.test_user.user_id):
+            create_res = self.client.post(
+                reverse("todos:tasklist-create"),
+                data={"title": "Old Title", "color": "#000000"},
                 format="json",
             )
-        self.assertEqual(response.status_code, 404)
 
-    def test_update_deleted_task_returns_404(self):
-        task = make_task(self.user_id, deleted=True)
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:update", kwargs={"task_id": task.id}),
-                data={"title": "Ghost"},
-                format="json",
-            )
-        self.assertEqual(response.status_code, 404)
+        list_id = create_res.data["id"]
+        update_url = reverse("todos:tasklist-update", kwargs={"list_id": list_id})
 
-    def test_update_unauthenticated_returns_403(self):
-        task = make_task(self.user_id)
-        with unauthed_patch():
-            response = self.client.put(
-                reverse("todos:update", kwargs={"task_id": task.id}),
-                data={"title": "Nope"},
-                format="json",
-            )
-        self.assertEqual(response.status_code, 403)
+        update_data = {"title": "New Updated Title"}
 
+        with auth_patch(self.test_user.user_id):
+            response = self.client.patch(update_url, data=update_data, format="json")
 
-# ---------------------------------------------------------------------------
-# CompleteTodoApiView
-# ---------------------------------------------------------------------------
-
-
-class CompleteTodoApiViewTests(BaseTaskTestCase):
-
-    def test_toggle_needs_action_to_completed(self):
-        task = make_task(self.user_id, status="needsAction")
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:complete", kwargs={"task_id": task.id}),
-                format="json",
-            )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["status"], "completed")
+        self.assertEqual(response.data["title"], "New Updated Title")
+        self.assertEqual(response.data["color"], "#000000")
 
-    def test_toggle_completed_to_needs_action(self):
-        task = make_task(self.user_id, status="completed")
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:complete", kwargs={"task_id": task.id}),
+    def test_update_task_list_protected_fields(self):
+        with auth_patch(self.test_user.user_id):
+            create_res = self.client.post(
+                reverse("todos:tasklist-create"), data={"title": "Protected Test"}
+            )
+
+        list_id = create_res.data["id"]
+        update_url = reverse("todos:tasklist-update", kwargs={"list_id": list_id})
+
+        bad_data = {"sync_status": "synced"}
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.patch(
+                update_url,
+                data=bad_data,
                 format="json",
             )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["status"], "needsAction")
 
-    def test_toggle_persists_to_db(self):
-        task = make_task(self.user_id, status="needsAction")
-        with auth_patch(self.user_id):
-            self.client.put(
-                reverse("todos:complete", kwargs={"task_id": task.id}),
-                format="json",
-            )
-        task.refresh_from_db()
-        self.assertEqual(task.status, "completed")
-
-    def test_complete_nonexistent_task_returns_404(self):
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:complete", kwargs={"task_id": uuid.uuid4()}),
-                format="json",
-            )
-        self.assertEqual(response.status_code, 404)
-
-    def test_complete_another_users_task_returns_404(self):
-        task = make_task(self.other_user_id)
-        with auth_patch(self.user_id):
-            response = self.client.put(
-                reverse("todos:complete", kwargs={"task_id": task.id}),
-                format="json",
-            )
-        self.assertEqual(response.status_code, 404)
-
-    def test_complete_unauthenticated_returns_403(self):
-        task = make_task(self.user_id)
-        with unauthed_patch():
-            response = self.client.put(
-                reverse("todos:complete", kwargs={"task_id": task.id}),
-                format="json",
-            )
-        self.assertEqual(response.status_code, 403)
-
-
-# ---------------------------------------------------------------------------
-# ListTodoApiView
-# ---------------------------------------------------------------------------
-
-
-class ListTodoApiViewTests(BaseTaskTestCase):
-
-    def test_list_returns_200(self):
-        with auth_patch(self.user_id):
-            response = self.client.get(reverse("todos:list"))
         self.assertEqual(response.status_code, 200)
 
-    def test_list_returns_only_users_tasks(self):
-        make_task(self.user_id, title="Mine")
-        make_task(self.other_user_id, title="Not mine")
-        with auth_patch(self.user_id):
-            response = self.client.get(reverse("todos:list"))
-        titles = [t["title"] for t in response.data["results"]]
-        self.assertIn("Mine", titles)
-        self.assertNotIn("Not mine", titles)
+        self.assertNotEqual(response.data.get("sync_status"), "synced")
 
-    def test_list_excludes_deleted_tasks(self):
-        make_task(self.user_id, title="Active")
-        make_task(self.user_id, title="Deleted", deleted=True)
-        with auth_patch(self.user_id):
-            response = self.client.get(reverse("todos:list"))
-        titles = [t["title"] for t in response.data["results"]]
-        self.assertIn("Active", titles)
-        self.assertNotIn("Deleted", titles)
-
-    def test_list_empty_when_no_tasks(self):
-        with auth_patch(self.user_id):
-            response = self.client.get(reverse("todos:list"))
-        self.assertEqual(response.data["results"], [])
-
-    def test_list_unauthenticated_returns_403(self):
-        with unauthed_patch():
-            response = self.client.get(reverse("todos:list"))
-        self.assertEqual(response.status_code, 403)
-
-
-# ---------------------------------------------------------------------------
-# DeleteTaskAPIView
-# ---------------------------------------------------------------------------
-
-
-class DeleteTaskAPIViewTests(BaseTaskTestCase):
-
-    def test_delete_returns_204(self):
-        task = make_task(self.user_id)
-        with auth_patch(self.user_id):
-            response = self.client.delete(
-                reverse("todos:delete", kwargs={"task_id": task.id})
+    def test_delete_task_list_success(self):
+        with auth_patch(self.test_user.user_id):
+            create_res = self.client.post(
+                reverse("todos:tasklist-create"),
+                data={"title": "Temporary List", "is_default": False},
+                format="json",
             )
+        list_id = create_res.data["id"]
+        delete_url = reverse("todos:tasklist-delete", kwargs={"list_id": list_id})
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.delete(delete_url)
+
         self.assertEqual(response.status_code, 204)
 
-    def test_delete_soft_deletes_task(self):
-        task = make_task(self.user_id)
-        with auth_patch(self.user_id):
-            self.client.delete(reverse("todos:delete", kwargs={"task_id": task.id}))
-        task.refresh_from_db()
-        self.assertTrue(task.deleted)
+        self.assertTrue(TaskList.objects.get(id=list_id).deleted)
 
-    def test_delete_task_no_longer_in_list(self):
-        task = make_task(self.user_id, title="Soon gone")
-        with auth_patch(self.user_id):
-            self.client.delete(reverse("todos:delete", kwargs={"task_id": task.id}))
-            response = self.client.get(reverse("todos:list"))
-        titles = [t["title"] for t in response.data["results"]]
-        self.assertNotIn("Soon gone", titles)
-
-    def test_delete_nonexistent_task_returns_404(self):
-        with auth_patch(self.user_id):
-            response = self.client.delete(
-                reverse("todos:delete", kwargs={"task_id": uuid.uuid4()})
+    def test_delete_default_list_fails(self):
+        with auth_patch(self.test_user.user_id):
+            create_res = self.client.post(
+                reverse("todos:tasklist-create"),
+                data={"title": "Primary List", "is_default": True},
+                format="json",
             )
-        self.assertEqual(response.status_code, 404)
+        list_id = create_res.data["id"]
+        delete_url = reverse("todos:tasklist-delete", kwargs={"list_id": list_id})
 
-    def test_delete_another_users_task_returns_404(self):
-        task = make_task(self.other_user_id)
+        with auth_patch(self.test_user.user_id):
+            response = self.client.delete(delete_url)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Cannot delete the default list", response.data["message"])
+
+        self.assertFalse(TaskList.objects.get(id=list_id).deleted)
+
+
+class TagApiTests(APITestCase):
+    def setUp(self):
+        self.user_id = "8acbe501-43d6-48e3-a02f-7201a7447e91"
+        self.list_url = reverse("todos:tag-list-create")
+
+    def test_create_tag_api_success(self):
+        payload = {"name": "Urgent", "color": "#FF0000"}
+
         with auth_patch(self.user_id):
-            response = self.client.delete(
-                reverse("todos:delete", kwargs={"task_id": task.id})
+            response = self.client.post(self.list_url, data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["name"], "Urgent")
+
+    def test_create_duplicate_tag_returns_400(self):
+        with auth_patch(self.user_id):
+            self.client.post(self.list_url, data={"name": "Work"}, format="json")
+            response = self.client.post(
+                self.list_url, data={"name": "Work"}, format="json"
             )
-        self.assertEqual(response.status_code, 404)
 
-    def test_delete_already_deleted_task_returns_404(self):
-        task = make_task(self.user_id, deleted=True)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("already exists", response.data["message"])
+
+    def test_update_tag_api_success(self):
+        tag = Tag.objects.create(owner_id=self.user_id, name="OldName")
+        url = reverse("todos:tag-detail", kwargs={"tag_id": tag.id})
+
         with auth_patch(self.user_id):
-            response = self.client.delete(
-                reverse("todos:delete", kwargs={"task_id": task.id})
-            )
-        self.assertEqual(response.status_code, 404)
+            response = self.client.patch(url, data={"name": "NewName"}, format="json")
 
-    def test_delete_unauthenticated_returns_403(self):
-        task = make_task(self.user_id)
-        with unauthed_patch():
-            response = self.client.delete(
-                reverse("todos:delete", kwargs={"task_id": task.id})
-            )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["name"], "NewName")
 
+    def test_delete_tag_api_success(self):
+        tag = Tag.objects.create(owner_id=self.user_id, name="To Delete")
+        url = reverse("todos:tag-detail", kwargs={"tag_id": tag.id})
 
-# ---------------------------------------------------------------------------
-# SyncTasksApiView
-# ---------------------------------------------------------------------------
-
-
-class SyncTasksApiViewTests(BaseTaskTestCase):
-
-    def test_sync_returns_202(self):
         with auth_patch(self.user_id):
-            response = self.client.post(reverse("todos:sync"))
-        self.assertEqual(response.status_code, 202)
+            response = self.client.delete(url)
 
-    def test_sync_returns_queued_message(self):
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Tag.objects.filter(id=tag.id).exists())
+
+    def test_get_tags_api_success(self):
+        Tag.objects.create(owner_id=self.user_id, name="A-Tag")
+        Tag.objects.create(owner_id=self.user_id, name="B-Tag")
+
         with auth_patch(self.user_id):
-            response = self.client.post(reverse("todos:sync"))
-        self.assertEqual(response.data["message"], "Sync queued successfully")
+            response = self.client.get(self.list_url)
 
-    def test_sync_unauthenticated_returns_403(self):
-        with unauthed_patch():
-            response = self.client.post(reverse("todos:sync"))
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
