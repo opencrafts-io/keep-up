@@ -128,7 +128,7 @@ class RetrieveTaskLists(BaseTaskView):
                 data={"message": str(e)}, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.exception("Unexpected error creating task list")
+            logger.exception("Unexpected error retrieving task lists")
             return Response(
                 data={"message": "An internal error occurred."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
