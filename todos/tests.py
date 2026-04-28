@@ -107,7 +107,6 @@ class TaskListTests(APITestCase):
 
         with auth_patch(self.test_user.user_id):
             response = self.client.patch(update_url, data=update_data, format="json")
-        print(response.data)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["title"], "New Updated Title")
