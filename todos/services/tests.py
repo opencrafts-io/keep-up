@@ -54,7 +54,7 @@ class TaskListServiceTest(TestCase):
         self.assertEqual(updated_task.owner_id, self.test_user.user_id)
         self.assertEqual(updated_task.is_default, True)
 
-    def test_retieve_user_task_lists(self):
+    def test_retrieve_user_task_lists(self):
         self.task_list_service.create_task_list(
             self.test_user.user_id, "school", is_default=False
         )
