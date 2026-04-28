@@ -175,9 +175,22 @@ class RetrieveTaskListByIDView(BaseTaskView):
 
     @extend_schema(
         tags=["Task Lists"],
-        summary="Get or create default task list",
-        description="Returns the user's default task list. Creates one if it doesn't exist.",
-        responses={200: TaskListSerializer},
+        summary="Get a task list by ID",
+        description="Retrieve a specific task list owned by the authenticated user.",
+        parameters=[
+            OpenApiParameter(
+                name="list_id",
+                description="UUID of the task list",
+                required=True,
+                type=str,
+                location=OpenApiParameter.PATH,
+            )
+        ],
+        responses={
+            200: TaskListSerializer,
+            400: OpenApiResponse(description="Missing list_id"),
+            404: OpenApiResponse(description="Task list not found"),
+        },
     )
     def get(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
