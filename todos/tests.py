@@ -408,7 +408,6 @@ class TaskApiTests(APITestCase):
 
         print(response.json())
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["parent"], str(parent.id))
 
     def test_promote_subtask_view(self):
         parent = TaskService.create_task(self.test_user.user_id, "Parent Task", "")

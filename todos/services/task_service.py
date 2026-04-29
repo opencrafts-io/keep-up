@@ -126,7 +126,7 @@ class TaskService:
         if "parent" in updates:
             new_parent = updates["parent"]
             if new_parent:
-                if new_parent.owner_id != owner_id or new_parent.deleted:
+                if str(new_parent.owner_id) != str(owner_id) or new_parent.deleted:
                     raise ValueError(
                         "Parent task not found or you don't have access to it."
                     )
