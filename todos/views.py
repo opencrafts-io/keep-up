@@ -445,7 +445,7 @@ class CreateTaskView(BaseTaskView):
         if error_response:
             return error_response
 
-        serializer = self.serializer_class(data=request.data)
+        serializer = self.serializer_class(data=request.data,context={"owner_id":user_id})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
