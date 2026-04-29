@@ -1,7 +1,10 @@
+from math import ceil
 from django.test import TestCase
-from todos.models import SyncStatus, Tag
+from django.utils import timezone
+from todos.models import SyncStatus, Tag, Task
 from .task_list_service import TaskListService
 from .tag_service import TagService
+from .task_service import TaskService
 from users.models import User
 
 
@@ -200,3 +203,195 @@ class TagServiceTest(TestCase):
         names = [t.name for t in tags]
 
         self.assertEqual(names, ["A", "B", "C"])
+
+
+class TaskServiceTest(TestCase):
+    def setUp(self) -> None:
+        self.test_user = User.objects.create(name="Test User")
+        self.user_id = str(self.test_user.user_id)
+        self.task_service = TaskService()
+        return super().setUp()
+
+    def test_task_service_create_basic(self):
+        time_due = timezone.now()
+        created_task = self.task_service.create_task(
+            self.user_id, "Hello there", "Hi there", time_due, "high"
+        )
+
+        self.assertIsNotNone(created_task)
+        self.assertEqual(created_task.title, "Hello there")
+        self.assertEqual(
+            created_task.notes,
+            "Hi there",
+        )
+        self.assertEqual(created_task.due, time_due)
+
+    def test_task_service_cannot_create_task_with_empty_title(self):
+        with self.assertRaises(ValueError):
+            # Notes can be empty but title cannot be empty!!
+            self.task_service.create_task(self.user_id, "", "")
+
+    def test_task_service_creates_task_with_default_task_list(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+        second_created_task = self.task_service.create_task(
+            self.user_id, "Hi again", ""
+        )
+        self.assertIsNotNone(created_task.task_list)
+        self.assertIsNotNone(second_created_task.task_list)
+
+        self.assertEqual(second_created_task.task_list, created_task.task_list)
+
+    def test_task_service_updates_task_successfully(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        updated_task = self.task_service.update_task(
+            self.user_id,
+            created_task.id,
+            title="Hello, there!",
+            notes="something",
+        )
+
+        self.assertEqual(updated_task.id, created_task.id)
+        self.assertNotEqual(updated_task.title, created_task.title)
+        self.assertEqual(updated_task.title, "Hello, there!")
+
+    def test_task_service_updates_task_with_sanity(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        with self.assertRaises(ValueError):
+            _ = self.task_service.update_task(
+                self.user_id,
+                created_task.id,
+                title="",  # title cannot be empty
+                notes="something",
+            )
+
+    def test_task_service_completes_task_successfully(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        self.assertEqual(created_task.status, "needsAction")
+
+        completed_task = self.task_service.complete_task(self.user_id, created_task.id)
+
+        self.assertEqual(completed_task.id, created_task.id)
+        self.assertEqual(completed_task.title, created_task.title)
+        self.assertEqual(completed_task.notes, created_task.notes)
+        self.assertEqual(completed_task.status, "completed")
+
+    def test_task_service_reopens_tasks_successfully(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        self.assertEqual(created_task.status, "needsAction")
+
+        completed_task = self.task_service.complete_task(self.user_id, created_task.id)
+
+        self.assertEqual(completed_task.id, created_task.id)
+        self.assertEqual(completed_task.title, created_task.title)
+        self.assertEqual(completed_task.notes, created_task.notes)
+        self.assertEqual(completed_task.status, "completed")
+
+        reopened_task = self.task_service.reopen_task(self.user_id, completed_task.id)
+        self.assertEqual(reopened_task.id, created_task.id)
+        self.assertEqual(reopened_task.title, created_task.title)
+        self.assertEqual(reopened_task.notes, created_task.notes)
+        self.assertEqual(reopened_task.status, "needsAction")
+
+    def test_task_service_soft_deletes_tasks(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        self.task_service.delete_task(owner_id=self.user_id, task_id=created_task.id)
+
+        retrieved_task = Task.objects.filter(id=created_task.id).first()
+
+        self.assertIsNotNone(retrieved_task)
+
+        self.assertEqual(retrieved_task.deleted, True)
+
+        with self.assertRaises(Task.DoesNotExist):
+            self.task_service.delete_task(
+                owner_id=self.user_id, task_id=created_task.id
+            )
+
+    def test_task_service_retrieves_user_tasks(self):
+        self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        retrieved_tasks = self.task_service.get_user_tasks(self.user_id)
+
+        self.assertIsNotNone(retrieved_tasks)
+        self.assertEqual(len(retrieved_tasks), 2)
+
+    def test_task_service_assigns_parent_with_sanity(self):
+        task_1 = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        task_1_subtask = self.task_service.create_task(
+            owner_id=self.user_id, title="Hi there!", notes="", parent=task_1
+        )
+
+        self.assertEqual(task_1_subtask.parent.id, task_1.id)
+
+    def test_task_service_moves_to_task_list_successfully(self):
+        created_task = self.task_service.create_task(
+            self.user_id,
+            "Hi there!",
+            "",
+        )
+
+        school_task_list = TaskListService.create_task_list(
+            owner_id=self.user_id, title="School"
+        )
+
+        self.assertNotEqual(created_task.task_list, school_task_list.id)
+
+        with self.assertRaises(Task.DoesNotExist):
+            moved_task = self.task_service.move_task_to_list(
+                "74550d37-ccad-4591-bc1d-61614347afef",
+                created_task.id,
+                school_task_list.id,
+            )
+
+        moved_task = self.task_service.move_task_to_list(
+            self.user_id, created_task.id, school_task_list.id
+        )
+
+        self.assertEqual(moved_task.title, created_task.title)
+        self.assertEqual(moved_task.notes, created_task.notes)
+        self.assertEqual(str(moved_task.owner_id), created_task.owner_id)
+        self.assertNotEqual(moved_task.task_list, created_task.task_list)
