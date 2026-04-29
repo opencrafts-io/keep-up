@@ -1,6 +1,7 @@
 import os
 from django.test.runner import DiscoverRunner
 from django.conf import settings
+from django.db import connections
 from testcontainers.postgres import PostgresContainer
 from urllib.parse import urlparse
 
@@ -17,7 +18,7 @@ class TestcontainersRunner(DiscoverRunner):
             url = self.postgres.get_connection_url()
             parsed = urlparse(url)
 
-            settings.DATABASES["default"] = {
+            db_config = {
                 "ENGINE": "django.db.backends.postgresql_psycopg2",
                 "NAME": parsed.path[1:],
                 "USER": parsed.username,
@@ -25,6 +26,9 @@ class TestcontainersRunner(DiscoverRunner):
                 "HOST": parsed.hostname,
                 "PORT": parsed.port,
             }
+            settings.DATABASES["default"] = db_config
+
+            connections.close_all()
 
         return super().setup_databases(**kwargs)
 

@@ -17,8 +17,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          
+          python-version: "3.12"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -29,51 +29,6 @@ jobs:
         run: |
           mkdir -p test-results
           python manage.py test 2>&1 | tee test-results/django-test-output.txt
-            
-      - name: Send test result to Discord
-        if: always()
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
-        run: |
-          STATUS="${{ job.status }}"
-          BRANCH="${{ github.ref_name }}"
-          SHORT_SHA="$(git rev-parse --short HEAD)"
-          REPO="${{ github.repository }}"
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          if [ "$STATUS" = "success" ]; then
-            COLOR=5763719
-            TITLE="Django tests passed"
-          else
-            COLOR=15548997
-            TITLE="Django tests failed"
-          fi
-
-          OUTPUT=$(tail -n 30 test-results/django-test-output.txt | sed 's/\\/\\\\/g; s/"/\\"/g')
-
-          cat > discord.json <<EOF
-          {
-            "username": "Keepup CI",
-            "embeds": [
-              {
-                "title": "$TITLE",
-                "color": $COLOR,
-                "fields": [
-                  { "name": "Repo", "value": "$REPO", "inline": true },
-                  { "name": "Branch", "value": "$BRANCH", "inline": true },
-                  { "name": "Commit", "value": "$SHORT_SHA", "inline": true },
-                  { "name": "Run", "value": "[Open workflow run]($RUN_URL)", "inline": false },
-                  { "name": "Output", "value": "```$OUTPUT```", "inline": false }
-                ]
-              }
-            ]
-          }
-          EOF
-
-          curl -H "Content-Type: application/json" \
-               -X POST \
-               -d @discord.json \
-               "$DISCORD_WEBHOOK_URL"
 
       - name: Install pack CLI
         run: |
@@ -187,13 +142,13 @@ jobs:
           IMAGE="${{ steps.tags.outputs.image_base }}:${{ steps.tags.outputs.sha_tag }}"
           git config user.name "CI Bot from Github Actions"
           git config user.email "actions@github.com"
-          
+
           if [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "master" ]; then
             FILE="services/keepup/deployment.yaml"
           else
             FILE="qaservices/keepup/deployment.yaml"
           fi
-          
+
           git add "$FILE"
           git commit -m "chore: update keepup image to $IMAGE (${{ github.ref_name }})"
           git push origin main
