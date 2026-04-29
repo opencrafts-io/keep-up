@@ -57,3 +57,4 @@ types-PyYAML==6.0.12.20260408
 typing_extensions==4.15.0
 uritemplate==4.2.0
 urllib3==2.6.3
+testcontainers[postgres]==12.1.0
