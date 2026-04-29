@@ -4,6 +4,7 @@ from django.conf import settings
 from django.db import connections
 from testcontainers.postgres import PostgresContainer
 from urllib.parse import urlparse
+from django.db.utils import DEFAULT_DB_ALIAS
 
 
 class TestcontainersRunner(DiscoverRunner):
@@ -26,9 +27,14 @@ class TestcontainersRunner(DiscoverRunner):
                 "HOST": parsed.hostname,
                 "PORT": parsed.port,
             }
+
             settings.DATABASES["default"] = db_config
 
-            connections.close_all()
+            if DEFAULT_DB_ALIAS in connections._connections:
+                del connections._connections[DEFAULT_DB_ALIAS]
+
+            conn = connections.create_connection(DEFAULT_DB_ALIAS)
+            conn.settings_dict = db_config
 
         return super().setup_databases(**kwargs)
 
