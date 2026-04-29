@@ -378,7 +378,7 @@ class TaskServiceTest(TestCase):
             owner_id=self.user_id, title="School"
         )
 
-        self.assertNotEqual(created_task.task_list, school_task_list.id)
+        self.assertNotEqual(created_task.task_list_id, school_task_list.id)
 
         with self.assertRaises(Task.DoesNotExist):
             moved_task = self.task_service.move_task_to_list(
