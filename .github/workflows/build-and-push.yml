@@ -65,6 +65,7 @@ jobs:
           pack build "$IMAGE_BASE:$IMAGE_TAG" \
             --buildpack paketo-buildpacks/python \
             --builder paketobuildpacks/builder-jammy-base \
+            --env BP_CPYTHON_VERSION=3.12.* \
             --cache "type=build;format=volume"
 
           docker tag "$IMAGE_BASE:$IMAGE_TAG" "$IMAGE_BASE:$SHA_TAG"
