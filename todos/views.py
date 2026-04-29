@@ -7,7 +7,8 @@ Google Tasks sync is handled asynchronously via Celery workers (not yet implemen
 
 import logging
 from django.db.models import ObjectDoesNotExist
-from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiRequest, OpenApiResponse, extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -15,7 +16,7 @@ from rest_framework.generics import ListAPIView
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task, TaskList
 from todos.serializers import TagSerializer, TaskListSerializer, TaskSerializer
-from .services import TaskListService, TagService
+from .services import TaskListService, TagService, TaskService
 from utils.parse_date_time_to_iso_format import parse_date_time_to_iso_format
 
 logger = logging.getLogger("keep_up")
@@ -428,186 +429,389 @@ class TagDetailView(BaseTaskView):
             )
 
 
-class CreateTodoApiView(BaseTaskView):
+class CreateTaskView(BaseTaskView):
     """Creates a todo item in local DB."""
 
-    def post(self, request, *args, **kwargs):
-        user_id, error_response = self.get_user_id(request)
-        if error_response:
-            return error_response
-
-        title = request.data.get("title")
-        if not title:
-            return Response(
-                data={"message": "Title is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        due_str = request.data.get("due")
-        due_date = parse_date_time_to_iso_format(due_str) if due_str else None
-
-        task = Task.objects.create(
-            owner_id=user_id,
-            title=title,
-            notes=request.data.get("notes"),
-            parent=request.data.get("parent"),
-            due=due_date,
-            # Google Tasks fields — populated later by Celery sync worker
-            external_id="",
-            etag="",
-            self_link="",
-            web_view_link="",
-            position="",
-            status="needsAction",
-        )
-
-        serializer = TaskSerializer(task)
-        return Response(data=serializer.data, status=status.HTTP_201_CREATED)
-
-
-class UpdateTodoApiView(BaseTaskView):
-    """Updates a todo item in local DB."""
-
-    def put(self, request, *args, **kwargs):
-        user_id, error_response = self.get_user_id(request)
-        if error_response:
-            return error_response
-
-        task_id = kwargs.get("task_id")
-        if not task_id:
-            return Response(
-                data={"message": "Task ID is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            task = Task.objects.get(id=task_id, owner_id=user_id, deleted=False)
-        except Task.DoesNotExist:
-            return Response(
-                data={"message": "Task not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if "title" in request.data:
-            task.title = request.data["title"]
-        if "notes" in request.data:
-            task.notes = request.data["notes"]
-        if "status" in request.data:
-            task.status = request.data["status"]
-        if "due" in request.data:
-            due_str = request.data["due"]
-            task.due = parse_date_time_to_iso_format(due_str) if due_str else None
-
-        task.save()
-
-        serializer = TaskSerializer(task)
-        return Response(data=serializer.data, status=status.HTTP_200_OK)
-
-
-class CompleteTodoApiView(BaseTaskView):
-    """Toggles task completion status."""
-
-    def put(self, request, *args, **kwargs):
-        user_id, error_response = self.get_user_id(request)
-        if error_response:
-            return error_response
-
-        task_id = kwargs.get("task_id")
-        if not task_id:
-            return Response(
-                data={"message": "Task ID is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            task = Task.objects.get(id=task_id, owner_id=user_id, deleted=False)
-        except Task.DoesNotExist:
-            return Response(
-                data={"message": "Task not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        task.status = "completed" if task.status != "completed" else "needsAction"
-        task.save()
-
-        serializer = TaskSerializer(task)
-        return Response(data=serializer.data, status=status.HTTP_200_OK)
-
-
-class ListTodoApiView(ListAPIView):
-    """Lists tasks from local DB."""
-
-    authentication_classes = [VerisafeJWTAuthentication]
     serializer_class = TaskSerializer
 
-    def get_queryset(self):
-        user_id = getattr(self.request, "user_id", None)
-        if user_id:
-            return Task.objects.filter(owner_id=user_id, deleted=False).order_by(
-                "status", "due", "position"
-            )
-        return Task.objects.none()
-
-    def list(self, request, *args, **kwargs):
-        user_id = getattr(request, "user_id", None)
-        if not user_id:
-            logger.error("Failed to extract user_id from JWT claims")
-            return Response(
-                data={
-                    "message": "We couldn't extract your user id from the provided token."
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        return super().list(request, *args, **kwargs)
-
-
-class DeleteTaskAPIView(BaseTaskView):
-    """Soft-deletes a task from local DB."""
-
-    def delete(self, request, *args, **kwargs):
-        user_id, error_response = self.get_user_id(request)
-        if error_response:
-            return error_response
-
-        task_id = kwargs.get("task_id")
-        if not task_id:
-            return Response(
-                data={"message": "Task ID is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            task = Task.objects.get(id=task_id, owner_id=user_id, deleted=False)
-        except Task.DoesNotExist:
-            return Response(
-                data={"message": "Task not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        task.deleted = True
-        task.save()
-
-        return Response(
-            data={"message": "Task deleted successfully"},
-            status=status.HTTP_204_NO_CONTENT,
-        )
-
-
-class SyncTasksApiView(BaseTaskView):
-    """
-    Triggers a background sync of local tasks with Google Tasks.
-    Sync is handled asynchronously via Celery workers.
-    """
-
+    @extend_schema(
+        tags=["Task"],
+        summary="Create a task",
+        request=TaskSerializer,
+        responses={200: TaskSerializer},
+    )
     def post(self, request, *args, **kwargs):
         user_id, error_response = self.get_user_id(request)
         if error_response:
             return error_response
 
-        # TODO: dispatch Celery task here e.g. sync_google_tasks.delay(user_id)
+        serializer = self.serializer_class(data=request.data,context={"owner_id":user_id})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(
-            data={"message": "Sync queued successfully"},
-            status=status.HTTP_202_ACCEPTED,
-        )
+        try:
+            validated_data = serializer.validated_data.copy()
+            if "parent_id" in validated_data:
+                validated_data["parent"] = validated_data.pop("parent_id")
+
+            created_task = TaskService.create_task(
+                owner_id=user_id,
+                **validated_data,
+            )
+            return Response(
+                data=self.serializer_class(created_task).data,
+                status=status.HTTP_201_CREATED,
+            )
+        except ValueError as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class RetrieveTaskView(BaseTaskView):
+    """Retrieves a single task by ID."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Retrieve a task",
+        responses={200: TaskSerializer},
+    )
+    def get(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task = TaskService.get_task(user_id, task_id)
+            return Response(
+                data=self.serializer_class(task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class UpdateTaskView(BaseTaskView):
+    """Updates a task."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Update a task",
+        request=TaskSerializer,
+        responses={200: TaskSerializer},
+    )
+    def patch(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            validated_data = request.data.copy()
+
+            # Rename parent_id to parent for update_task
+            if "parent_id" in validated_data:
+                parent_id = validated_data.pop("parent_id")
+                if parent_id:
+                    validated_data["parent"] = Task.objects.get(id=parent_id)
+                else:
+                    validated_data["parent"] = None
+
+            updated_task = TaskService.update_task(
+                owner_id=user_id, task_id=task_id, **validated_data
+            )
+            return Response(
+                data=self.serializer_class(updated_task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+class DeleteTaskView(BaseTaskView):
+    """Deletes a task (soft delete)."""
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Delete a task",
+        responses={204: None},
+    )
+    def delete(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            TaskService.delete_task(user_id, task_id)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class ListTasksView(BaseTaskView):
+    """Lists all tasks for the authenticated user, optionally filtered by task list."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="List user tasks",
+        parameters=[
+            OpenApiParameter(
+                name="task_list_id",
+                description="Optional TaskList ID to filter by",
+                required=False,
+                type=OpenApiTypes.UUID,
+            ),
+        ],
+        responses={200: TaskSerializer(many=True)},
+    )
+    def get(self, request, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task_list_id = request.query_params.get("task_list_id")
+            tasks = TaskService.get_user_tasks(user_id, task_list_id)
+            return Response(
+                data=self.serializer_class(tasks, many=True).data,
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class CompleteTaskView(BaseTaskView):
+    """Marks a task as completed."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Complete a task",
+        responses={200: TaskSerializer},
+    )
+    def post(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task = TaskService.complete_task(user_id, task_id)
+            return Response(
+                data=self.serializer_class(task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class ReopenTaskView(BaseTaskView):
+    """Marks a completed task as needs_action."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Reopen a task",
+        responses={200: TaskSerializer},
+    )
+    def post(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task = TaskService.reopen_task(user_id, task_id)
+            return Response(
+                data=self.serializer_class(task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class MoveTaskToListView(BaseTaskView):
+    """Moves a task to a different task list."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Move a task to a list",
+        request=OpenApiRequest(
+            request={
+                "type": "object",
+                "properties": {"task_list_id": {"type": "string", "format": "uuid"}},
+            }
+        ),
+        responses={200: TaskSerializer},
+    )
+    def post(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        task_list_id = request.data.get("task_list_id")
+        if not task_list_id:
+            return Response(
+                {"message": "task_list_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            task = TaskService.move_task_to_list(user_id, task_id, task_list_id)
+            return Response(
+                data=self.serializer_class(task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task or task list not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class ConvertToSubtaskView(BaseTaskView):
+    """Converts a task to a subtask by assigning a parent."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Convert task to subtask",
+        request=OpenApiRequest(
+            request={
+                "type": "object",
+                "properties": {"parent_task_id": {"type": "string", "format": "uuid"}},
+            }
+        ),
+        responses={200: TaskSerializer},
+    )
+    def post(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        parent_task_id = request.data.get("parent_task_id")
+        if not parent_task_id:
+            return Response(
+                {"message": "parent_task_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            task = TaskService.convert_to_subtask(user_id, task_id, parent_task_id)
+            return Response(
+                data=self.serializer_class(task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task or parent task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class PromoteSubtaskView(BaseTaskView):
+    """Promotes a subtask to a top-level task."""
+
+    serializer_class = TaskSerializer
+
+    @extend_schema(
+        tags=["Task"],
+        summary="Promote subtask to top-level task",
+        responses={200: TaskSerializer},
+    )
+    def post(self, request, task_id, *args, **kwargs):
+        user_id, error_response = self.get_user_id(request)
+        if error_response:
+            return error_response
+
+        try:
+            task = TaskService.promote_subtask(user_id, task_id)
+            return Response(
+                data=self.serializer_class(task).data,
+                status=status.HTTP_200_OK,
+            )
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )

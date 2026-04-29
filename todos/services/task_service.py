@@ -49,7 +49,7 @@ class TaskService:
 
         # Validate parent task
         if parent:
-            if parent.owner_id != owner_id or parent.deleted:
+            if str(parent.owner_id) != str(owner_id) or parent.deleted:
                 raise ValueError(
                     "Parent task not found or you don't have access to it."
                 )
@@ -64,7 +64,7 @@ class TaskService:
             task_list = TaskListService.get_or_create_default_list(owner_id)
 
         # Verify task_list ownership
-        if task_list.owner_id != owner_id or task_list.deleted:
+        if str(task_list.owner_id) != str(owner_id) or task_list.deleted:
             raise ValueError("Task list not found or you don't have access to it.")
 
         task = Task.objects.create(
@@ -126,7 +126,7 @@ class TaskService:
         if "parent" in updates:
             new_parent = updates["parent"]
             if new_parent:
-                if new_parent.owner_id != owner_id or new_parent.deleted:
+                if str(new_parent.owner_id) != str(owner_id) or new_parent.deleted:
                     raise ValueError(
                         "Parent task not found or you don't have access to it."
                     )

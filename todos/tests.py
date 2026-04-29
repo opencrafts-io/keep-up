@@ -1,6 +1,10 @@
+import re
+import uuid
+from django.utils.formats import reset_format_cache
 from rest_framework.test import APITestCase
 from django.urls import reverse
-from todos.models import Tag, TaskList
+from todos.models import Tag, Task, TaskList
+from todos.services.task_service import TaskService
 from users.models import User
 from unittest.mock import patch
 from django.contrib.auth.models import AnonymousUser
@@ -223,3 +227,213 @@ class TagApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 2)
+
+
+class TaskApiTests(APITestCase):
+    def setUp(self) -> None:
+        self.test_user = User.objects.create(name="Test User")
+        return super().setUp()
+
+    def test_task_create_view(self):
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-create"),
+                data={
+                    "notes": "Hi there",
+                    "title": "Hello there!",
+                },
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["notes"], "Hi there")
+        self.assertEqual(response.data["title"], "Hello there!")
+
+    def test_task_list_view(self):
+        TaskService.create_task(
+            self.test_user.user_id,
+            "Task 1",
+            "Notes 1",
+        )
+        TaskService.create_task(
+            self.test_user.user_id,
+            "Task 2",
+            "Notes 2",
+        )
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(reverse("todos:task-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
+        self.assertEqual(response.data[0]["title"], "Task 1")
+        self.assertEqual(response.data[1]["title"], "Task 2")
+
+    def test_task_retrieve_view(self):
+        task = TaskService.create_task(
+            self.test_user.user_id,
+            "Test Task",
+            "Test Notes",
+        )
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(
+                reverse("todos:task-retrieve", kwargs={"task_id": task.id})
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["id"], str(task.id))
+        self.assertEqual(response.data["title"], "Test Task")
+        self.assertEqual(response.data["notes"], "Test Notes")
+
+    def test_task_retrieve_view_not_found(self):
+        with auth_patch(self.test_user.user_id):
+            response = self.client.get(
+                reverse("todos:task-retrieve", kwargs={"task_id": uuid.uuid4()})
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["message"], "Task not found")
+
+    def test_task_update_view(self):
+        task = TaskService.create_task(
+            self.test_user.user_id,
+            "Original Title",
+            "Original Notes",
+        )
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.patch(
+                reverse("todos:task-update", kwargs={"task_id": task.id}),
+                data={
+                    "title": "Updated Title",
+                    "notes": "Updated Notes",
+                },
+                format="json",
+            )
+
+            print(response.json())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["title"], "Updated Title")
+        self.assertEqual(response.data["notes"], "Updated Notes")
+
+    def test_task_update_view_empty_title(self):
+        task = TaskService.create_task(
+            self.test_user.user_id,
+            "Original Title",
+            "Original Notes",
+        )
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.patch(
+                reverse("todos:task-update", kwargs={"task_id": task.id}),
+                data={
+                    "title": "",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["message"], "Task title cannot be empty.")
+
+    def test_task_delete_view(self):
+        task = TaskService.create_task(
+            self.test_user.user_id,
+            "Task to Delete",
+            "Notes",
+        )
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.delete(
+                reverse("todos:task-delete", kwargs={"task_id": task.id})
+            )
+
+        self.assertEqual(response.status_code, 204)
+
+        # Verify task is soft-deleted
+        deleted_task = Task.objects.get(id=task.id)
+        self.assertTrue(deleted_task.deleted)
+
+    def test_task_complete_view(self):
+        task = TaskService.create_task(self.test_user.user_id, "Complete Me", "")
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-complete", kwargs={"task_id": task.id})
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "completed")
+        self.assertIsNotNone(response.data["completed"])
+
+    def test_task_reopen_view(self):
+        task = TaskService.create_task(self.test_user.user_id, "Reopen Me", "")
+        TaskService.complete_task(self.test_user.user_id, task.id)
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-reopen", kwargs={"task_id": task.id})
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "needsAction")
+        self.assertIsNone(response.data["completed"])
+
+    def test_task_move_to_list_view(self):
+        new_list = TaskList.objects.create(
+            owner_id=self.test_user.user_id, title="New List"
+        )
+        task = TaskService.create_task(self.test_user.user_id, "Move Me", "")
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-move", kwargs={"task_id": task.id}),
+                data={"task_list_id": str(new_list.id)},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(str(response.data["task_list"]), str(new_list.id))
+
+    def test_convert_to_subtask_view(self):
+        parent = TaskService.create_task(self.test_user.user_id, "Parent Task", "")
+        child = TaskService.create_task(self.test_user.user_id, "Child Task", "")
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-convert-to-subtask", kwargs={"task_id": child.id}),
+                data={"parent_task_id": str(parent.id)},
+                format="json",
+            )
+
+        print(response.json())
+        self.assertEqual(response.status_code, 200)
+
+    def test_promote_subtask_view(self):
+        parent = TaskService.create_task(self.test_user.user_id, "Parent Task", "")
+        child = Task.objects.create(
+            owner_id=self.test_user.user_id,
+            title="Subtask",
+            parent=parent,
+            task_list=parent.task_list,
+        )
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-promote", kwargs={"task_id": child.id})
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_task_move_missing_payload(self):
+        task = TaskService.create_task(self.test_user.user_id, "No Payload", "")
+
+        with auth_patch(self.test_user.user_id):
+            response = self.client.post(
+                reverse("todos:task-move", kwargs={"task_id": task.id}),
+                data={},  # Missing task_list_id
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["message"], "task_list_id is required")
