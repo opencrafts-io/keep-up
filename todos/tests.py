@@ -1,41 +1,9 @@
-import os
 from rest_framework.test import APITestCase
 from django.urls import reverse
 from todos.models import Tag, TaskList
 from users.models import User
 from unittest.mock import patch
 from django.contrib.auth.models import AnonymousUser
-from django.test import override_settings
-from testcontainers.postgres import PostgresContainer
-from urllib.parse import urlparse
-import django
-from django.conf import settings
-
-
-def _setup_test_db():
-    if not os.getenv("DB_NAME"):
-        postgres = PostgresContainer("postgres:18")
-        postgres.start()
-        url = postgres.get_connection_url()
-        parsed = urlparse(url)
-
-        settings.DATABASES["default"] = {
-            "ENGINE": "django.db.backends.postgresql_psycopg2",
-            "NAME": parsed.path[1:],
-            "USER": parsed.username,
-            "PASSWORD": parsed.password,
-            "HOST": parsed.hostname,
-            "PORT": parsed.port,
-        }
-        return postgres
-    return None
-
-
-_ci_postgres = _setup_test_db()
-
-
-class PostgreSQLTestCase(APITestCase):
-    pass
 
 
 def auth_patch(user_id):
@@ -54,7 +22,7 @@ def auth_patch(user_id):
     )
 
 
-class TaskListTests(PostgreSQLTestCase):
+class TaskListTests(APITestCase):
     def setUp(self) -> None:
         self.test_user = User.objects.create(name="Test User")
         return super().setUp()
@@ -202,7 +170,7 @@ class TaskListTests(PostgreSQLTestCase):
         self.assertFalse(TaskList.objects.get(id=list_id).deleted)
 
 
-class TagApiTests(PostgreSQLTestCase):
+class TagApiTests(APITestCase):
     def setUp(self):
         self.user_id = "8acbe501-43d6-48e3-a02f-7201a7447e91"
         self.list_url = reverse("todos:tag-list-create")
