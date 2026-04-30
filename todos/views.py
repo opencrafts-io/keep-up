@@ -127,9 +127,19 @@ class RetrieveTaskLists(BaseTaskView):
         try:
             task_list = TaskListService().get_user_lists(owner_id=user_id)
 
+            paginator = self.pagination_class()
+
+            page = paginator.paginate_queryset(task_list, request=request, view=self)
+
+            if page is not None:
+                serializer = self.serializer_class(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+
             return Response(
-                data=self.serializer_class(task_list, many=True).data,
-                status=status.HTTP_200_OK,
+                data={
+                    "message": "something went wrong while attempting to paginate response"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         except ValueError as e:
