@@ -1,4 +1,5 @@
 import logging
+from django.db.models import QuerySet
 from django.utils import timezone
 from todos.models import Task, TaskStatus, SyncStatus
 from .task_list_service import TaskListService
@@ -264,7 +265,7 @@ class TaskService:
     @staticmethod
     def get_user_tasks(
         owner_id: str, task_list_id: str = None, include_deleted: bool = False
-    ) -> list:
+    ) -> QuerySet:
         """
         Retrieve all tasks for a user, optionally filtered by task list.
 
