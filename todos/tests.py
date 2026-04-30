@@ -226,7 +226,7 @@ class TagApiTests(APITestCase):
             response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(len(response.data["results"]), 2)
 
 
 class TaskApiTests(APITestCase):

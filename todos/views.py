@@ -5,6 +5,7 @@ Views operating purely on local DB.
 Google Tasks sync is handled asynchronously via Celery workers (not yet implemented).
 """
 
+from inspect import stack
 import logging
 from django.db.models import ObjectDoesNotExist
 from drf_spectacular.types import OpenApiTypes
@@ -348,6 +349,7 @@ class DeleteTaskListView(BaseTaskView):
 
 class TagListCreateView(BaseTaskView):
     serializer_class = TagSerializer
+    pagination_class = StandardResultsSetPagination
 
     @extend_schema(
         tags=["Tags"],
@@ -361,7 +363,21 @@ class TagListCreateView(BaseTaskView):
             return error_response
 
         tags = TagService.get_user_tags(user_id)
-        return Response(self.serializer_class(tags, many=True).data)
+
+        paginator = self.pagination_class()
+
+        page = paginator.paginate_queryset(queryset=tags, request=request, view=self)
+
+        if page is not None:
+            serializer = self.serializer_class(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        return Response(
+            data={
+                "message": "something went wrong while attempting to paginate response."
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
     @extend_schema(
         tags=["Tags"],
