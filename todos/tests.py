@@ -226,7 +226,7 @@ class TagApiTests(APITestCase):
             response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(len(response.data["results"]), 2)
 
 
 class TaskApiTests(APITestCase):
@@ -264,9 +264,9 @@ class TaskApiTests(APITestCase):
             response = self.client.get(reverse("todos:task-list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 2)
-        self.assertEqual(response.data[0]["title"], "Task 1")
-        self.assertEqual(response.data[1]["title"], "Task 2")
+        self.assertEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["results"][0]["title"], "Task 1")
+        self.assertEqual(response.data["results"][1]["title"], "Task 2")
 
     def test_task_retrieve_view(self):
         task = TaskService.create_task(

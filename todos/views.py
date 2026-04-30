@@ -5,14 +5,21 @@ Views operating purely on local DB.
 Google Tasks sync is handled asynchronously via Celery workers (not yet implemented).
 """
 
+from inspect import stack
 import logging
 from django.db.models import ObjectDoesNotExist
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, OpenApiRequest, OpenApiResponse, extend_schema
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiRequest,
+    OpenApiResponse,
+    extend_schema,
+)
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.generics import ListAPIView
+from keep_up.pagination import StandardResultsSetPagination
 from keep_up.verisafe_jwt_authentication import VerisafeJWTAuthentication
 from todos.models import Task, TaskList
 from todos.serializers import TagSerializer, TaskListSerializer, TaskSerializer
@@ -104,6 +111,7 @@ class RetrieveTaskLists(BaseTaskView):
     """Retrieves user task lists from the DB"""
 
     serializer_class = TaskListSerializer
+    pagination_class = StandardResultsSetPagination
 
     @extend_schema(
         tags=["Task Lists"],
@@ -119,9 +127,19 @@ class RetrieveTaskLists(BaseTaskView):
         try:
             task_list = TaskListService().get_user_lists(owner_id=user_id)
 
+            paginator = self.pagination_class()
+
+            page = paginator.paginate_queryset(task_list, request=request, view=self)
+
+            if page is not None:
+                serializer = self.serializer_class(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+
             return Response(
-                data=self.serializer_class(task_list, many=True).data,
-                status=status.HTTP_200_OK,
+                data={
+                    "message": "something went wrong while attempting to paginate response"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         except ValueError as e:
@@ -139,6 +157,7 @@ class RetrieveTaskLists(BaseTaskView):
 class RetrieveOrCreateUserDefaultTaskList(BaseTaskView):
 
     serializer_class = TaskListSerializer
+    pagination_class = StandardResultsSetPagination
 
     @extend_schema(
         tags=["Task Lists"],
@@ -173,6 +192,7 @@ class RetrieveOrCreateUserDefaultTaskList(BaseTaskView):
 
 class RetrieveTaskListByIDView(BaseTaskView):
     serializer_class = TaskListSerializer
+    pagination_class = StandardResultsSetPagination
 
     @extend_schema(
         tags=["Task Lists"],
@@ -339,6 +359,7 @@ class DeleteTaskListView(BaseTaskView):
 
 class TagListCreateView(BaseTaskView):
     serializer_class = TagSerializer
+    pagination_class = StandardResultsSetPagination
 
     @extend_schema(
         tags=["Tags"],
@@ -352,7 +373,21 @@ class TagListCreateView(BaseTaskView):
             return error_response
 
         tags = TagService.get_user_tags(user_id)
-        return Response(self.serializer_class(tags, many=True).data)
+
+        paginator = self.pagination_class()
+
+        page = paginator.paginate_queryset(queryset=tags, request=request, view=self)
+
+        if page is not None:
+            serializer = self.serializer_class(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        return Response(
+            data={
+                "message": "something went wrong while attempting to paginate response."
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
     @extend_schema(
         tags=["Tags"],
@@ -445,7 +480,9 @@ class CreateTaskView(BaseTaskView):
         if error_response:
             return error_response
 
-        serializer = self.serializer_class(data=request.data,context={"owner_id":user_id})
+        serializer = self.serializer_class(
+            data=request.data, context={"owner_id": user_id}
+        )
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -551,6 +588,7 @@ class UpdateTaskView(BaseTaskView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+
 class DeleteTaskView(BaseTaskView):
     """Deletes a task (soft delete)."""
 
@@ -583,6 +621,7 @@ class ListTasksView(BaseTaskView):
     """Lists all tasks for the authenticated user, optionally filtered by task list."""
 
     serializer_class = TaskSerializer
+    pagination_class = StandardResultsSetPagination
 
     @extend_schema(
         tags=["Task"],
@@ -605,9 +644,20 @@ class ListTasksView(BaseTaskView):
         try:
             task_list_id = request.query_params.get("task_list_id")
             tasks = TaskService.get_user_tasks(user_id, task_list_id)
+
+            paginator = self.pagination_class()
+
+            page = paginator.paginate_queryset(tasks, request=request, view=self)
+
+            if page is not None:
+                serializer = self.serializer_class(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+
             return Response(
-                data=self.serializer_class(tasks, many=True).data,
-                status=status.HTTP_200_OK,
+                data={
+                    "message": "something went wrong while attempting to paginate your response."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except Exception as e:
             return Response(
