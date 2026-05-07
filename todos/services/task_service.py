@@ -20,6 +20,7 @@ class TaskService:
         task_list=None,
         parent=None,
         tags=None,
+        **kwargs,
     ) -> Task:
         """
         Create a new task for a user.
