@@ -170,7 +170,7 @@ class Task(models.Model):
         choices=TaskStatus.choices,
         default=TaskStatus.NEEDS_ACTION,
     )
-    due = models.DateField(
+    due = models.DateTimeField(
         null=True,
         blank=True,
         help_text="Google Tasks only stores the date, not the time.",
