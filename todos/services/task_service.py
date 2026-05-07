@@ -6,6 +6,24 @@ from .task_list_service import TaskListService
 
 logger = logging.getLogger("keep_up")
 
+READONLY_FIELDS = {
+    "priority_display",
+    "status_display",
+    "sync_status_display",
+    "subtask_count",
+    "id",
+    "attachments",
+    "subtask_count",
+    "position",
+    "sync_status",
+    "sync_status_display",
+    "last_synced_at",
+    "hidden",
+    "created_at",
+    "updated_at",
+    "completed",
+}
+
 
 class TaskService:
     """Service for managing tasks with complex lifecycle and sync awareness."""
@@ -113,6 +131,7 @@ class TaskService:
             Task.DoesNotExist: If task not found or doesn't belong to user
             ValueError: If updates are invalid (empty title, invalid parent, etc.)
         """
+        updates = {k: v for k, v in updates.items() if k not in READONLY_FIELDS}
         task = Task.objects.get(id=task_id, owner_id=owner_id, deleted=False)
 
         # Validate and sanitize title if provided
