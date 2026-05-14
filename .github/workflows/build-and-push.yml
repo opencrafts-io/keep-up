@@ -17,7 +17,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Django tests
+        id: django_tests
+        run: |
+          mkdir -p test-results
+          python manage.py test 2>&1 | tee test-results/django-test-output.txt
 
       - name: Install pack CLI
         run: |
@@ -65,6 +76,7 @@ jobs:
           pack build "$IMAGE_BASE:$IMAGE_TAG" \
             --buildpack paketo-buildpacks/python \
             --builder paketobuildpacks/builder-jammy-base \
+            --env BP_CPYTHON_VERSION=3.12.* \
             --cache "type=build;format=volume"
 
           docker tag "$IMAGE_BASE:$IMAGE_TAG" "$IMAGE_BASE:$SHA_TAG"
@@ -130,13 +142,13 @@ jobs:
           IMAGE="${{ steps.tags.outputs.image_base }}:${{ steps.tags.outputs.sha_tag }}"
           git config user.name "CI Bot from Github Actions"
           git config user.email "actions@github.com"
-          
+
           if [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "master" ]; then
             FILE="services/keepup/deployment.yaml"
           else
             FILE="qaservices/keepup/deployment.yaml"
           fi
-          
+
           git add "$FILE"
           git commit -m "chore: update keepup image to $IMAGE (${{ github.ref_name }})"
           git push origin main
