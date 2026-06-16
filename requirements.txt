@@ -40,7 +40,7 @@ pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==3.0
 Pygments==2.20.0
-PyJWT==2.12.1
+PyJWT==2.13.0
 pyOpenSSL==26.1.0
 pyparsing==3.3.2
 python-dotenv==1.2.2
