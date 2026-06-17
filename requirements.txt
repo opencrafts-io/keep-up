@@ -4,7 +4,7 @@ cachetools==7.0.6
 certifi==2026.4.22
 cffi==2.0.0
 charset-normalizer==3.4.7
-cryptography==47.0.0
+cryptography==48.0.1
 Django==6.0.4
 django-safedelete==1.4.1
 django-stubs==6.0.3
