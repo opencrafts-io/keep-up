@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from todos.models import SyncStatus, Task, TaskList, TaskStatus
 from todos.google_tasks import GoogleTasksError, task_to_body
+from todos.services.task_list_service import TaskListService
 from todos.services.task_service import TaskService
 from todos.tasks import sweep_stale_syncs, sync_task, sync_task_list
 
@@ -123,6 +124,54 @@ class EnqueueTests(SyncTestCase):
                 TaskService.delete_task(owner_id=self.owner_id, task_id=task.id)
 
         delay.assert_called_once_with(str(task.id))
+
+    def test_an_unreachable_broker_does_not_fail_the_write(self):
+        """
+        The enqueue runs inline outside an atomic block, so a broker outage
+        would otherwise surface as a 500 on task creation. The row is already
+        committed as pending and the sweep re-queues it.
+        """
+        with patch(
+            "todos.tasks.sync_task.delay",
+            side_effect=OSError("broker unreachable"),
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                task = TaskService.create_task(
+                    owner_id=self.owner_id, title="Buy milk", task_list=self.task_list
+                )
+
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Buy milk")
+        self.assertEqual(task.sync_status, SyncStatus.PENDING)
+
+    def test_an_unreachable_broker_is_logged(self):
+        with patch(
+            "todos.tasks.sync_task.delay",
+            side_effect=OSError("broker unreachable"),
+        ):
+            with self.assertLogs("keep_up", level="ERROR") as logs:
+                with self.captureOnCommitCallbacks(execute=True):
+                    TaskService.create_task(
+                        owner_id=self.owner_id,
+                        title="Buy milk",
+                        task_list=self.task_list,
+                    )
+
+        self.assertTrue(any("sweep" in line for line in logs.output))
+
+    def test_an_unreachable_broker_does_not_fail_a_list_write(self):
+        with patch(
+            "todos.tasks.sync_task_list.delay",
+            side_effect=OSError("broker unreachable"),
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                task_list = TaskListService.create_task_list(
+                    owner_id=self.owner_id, title="Groceries"
+                )
+
+        task_list.refresh_from_db()
+        self.assertEqual(task_list.title, "Groceries")
+        self.assertEqual(task_list.sync_status, SyncStatus.PENDING)
 
     def test_ids_are_enqueued_as_strings(self):
         """UUIDs are not JSON serialisable, so the signature must be a str."""

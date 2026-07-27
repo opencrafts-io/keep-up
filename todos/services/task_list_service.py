@@ -15,10 +15,25 @@ def enqueue_list_sync(list_id) -> None:
     Enqueueing inside the transaction would let a worker read the row before
     it is durable. The import is deferred because todos.tasks imports this
     module.
+
+    Outside an atomic block Django runs the callback inline, so this executes
+    within the request. A broker that cannot be reached must therefore not
+    fail the write: the record is already committed as pending, and the
+    periodic sweep re-queues it. Syncing late beats refusing to save.
     """
     from todos.tasks import sync_task_list
 
-    transaction.on_commit(lambda: sync_task_list.delay(str(list_id)))
+    def enqueue():
+        try:
+            sync_task_list.delay(str(list_id))
+        except Exception:
+            logger.exception(
+                "Could not queue a Google sync for task list %s; the sweep "
+                "will retry it",
+                list_id,
+            )
+
+    transaction.on_commit(enqueue)
 
 
 class TaskListService:

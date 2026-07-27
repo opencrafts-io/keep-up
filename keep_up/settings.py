@@ -15,6 +15,8 @@ from celery.schedules import crontab
 from dotenv import load_dotenv
 from pathlib import Path
 
+from keep_up.broker_url import amqp_url
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -113,7 +115,12 @@ RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", None)
 
 
 # Celery setup
-CELERY_BROKER_URL = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
+# Built through a helper because credentials have to be percent-encoded: a
+# '#', '?' or '/' in the password otherwise breaks URL parsing and Celery
+# fails with an unrelated-looking port error.
+CELERY_BROKER_URL = amqp_url(
+    RABBITMQ_USER, RABBITMQ_PASSWORD, RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_VHOST
+)
 CELERY_TIMEZONE = "UTC"
 CELERY_RESULT_BACKEND = "rpc://"
 
