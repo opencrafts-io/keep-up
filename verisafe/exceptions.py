@@ -28,11 +28,17 @@ class NeedsAuthorization(TokenBrokerError):
         capabilities: List[str],
         authorization_url: Optional[str],
         reason: str,
+        authorization_method: str = "POST",
     ) -> None:
         self.provider = provider
         self.capabilities = capabilities
         self.authorization_url = authorization_url
         self.reason = reason
+        # Relayed verbatim so a client can act on it without knowing
+        # Verisafe's contract. The client supplies its own platform and
+        # redirect_uri, and its own bearer token, which is why this service
+        # cannot make the call on the user's behalf.
+        self.authorization_method = authorization_method
         super().__init__(
             f"user must authorize {capabilities} at {provider} ({reason})"
         )
