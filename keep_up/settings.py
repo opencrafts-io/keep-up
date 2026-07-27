@@ -144,6 +144,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=3, minute=0),
         "kwargs": {"include_skipped": True},
     },
+    # Bring changes made in the Google Tasks app back into the local database.
+    "pull-from-google": {
+        "task": "todos.tasks.pull_all_users",
+        "schedule": crontab(minute="*/15"),
+    },
 }
 
 # Google Tasks sync tuning
@@ -151,6 +156,14 @@ GOOGLE_SYNC_STALE_AFTER_MINUTES = int(
     os.getenv("GOOGLE_SYNC_STALE_AFTER_MINUTES", "15")
 )
 GOOGLE_SYNC_SWEEP_BATCH_SIZE = int(os.getenv("GOOGLE_SYNC_SWEEP_BATCH_SIZE", "500"))
+
+# Google Tasks has no sync tokens, so pulls re-read a small overlap window to
+# absorb clock skew. Re-reading unchanged records is free: every write is an
+# idempotent upsert.
+GOOGLE_PULL_OVERLAP_MINUTES = int(os.getenv("GOOGLE_PULL_OVERLAP_MINUTES", "2"))
+# Pulls are spread across this many seconds so a schedule boundary does not
+# put every account on the broker at once.
+GOOGLE_PULL_JITTER_SECONDS = int(os.getenv("GOOGLE_PULL_JITTER_SECONDS", "300"))
 
 
 REST_FRAMEWORK = {
