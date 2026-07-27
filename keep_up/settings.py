@@ -94,6 +94,15 @@ LOGGING = {
     },
 }
 
+# Verisafe setup
+# No default base url: each environment supplies its own, so a missing value
+# fails loudly instead of silently pointing a QA deployment at production.
+VERISAFE_BASE_URL = os.getenv("VERISAFE_BASE_URL")
+VERISAFE_API_KEY = os.getenv("VERISAFE_API_KEY")
+VERISAFE_TIMEOUT = float(os.getenv("VERISAFE_TIMEOUT", "10"))
+VERISAFE_RETRIES = int(os.getenv("VERISAFE_RETRIES", "2"))
+
+
 # Rabbit mq setup
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", None)
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", None)
