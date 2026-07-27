@@ -1,10 +1,27 @@
 import logging
+from uuid import UUID
+
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 from todos.models import Task, TaskStatus, SyncStatus
 from .task_list_service import TaskListService
 
 logger = logging.getLogger("keep_up")
+
+
+def enqueue_task_sync(task_id) -> None:
+    """
+    Queue a Google Tasks push once the surrounding transaction commits.
+
+    Enqueueing inside the transaction would let a worker read the row before
+    it is durable. The import is deferred because todos.tasks imports this
+    module.
+    """
+    from todos.tasks import sync_task
+
+    transaction.on_commit(lambda: sync_task.delay(str(task_id)))
+
 
 READONLY_FIELDS = {
     "priority_display",
@@ -106,6 +123,7 @@ class TaskService:
             f"Created task '{title}' for user {owner_id} "
             f"in list {task_list.id} (sync_status=pending)"
         )
+        enqueue_task_sync(task.id)
         return task
 
     @staticmethod
@@ -190,6 +208,7 @@ class TaskService:
             f"Updated task {task_id} for user {owner_id}. "
             f"Fields: {list(updates.keys())}. Sync status: {task.sync_status}"
         )
+        enqueue_task_sync(task.id)
         return task
 
     @staticmethod
@@ -264,6 +283,71 @@ class TaskService:
         logger.info(
             f"Deleted task {task_id} for user {owner_id} (soft delete, sync_status=pending)"
         )
+        enqueue_task_sync(task.id)
+
+    @staticmethod
+    def mark_synced(
+        task_id: UUID | str, external_id: str, etag: str, position: str = ""
+    ) -> Task:
+        """
+        Called by the sync worker after a successful push to Google Tasks.
+
+        Args:
+            task_id: UUID of the local task
+            external_id: Google Tasks task ID
+            etag: Google Tasks ETag, stored for future two-way sync
+            position: Google's ordering string, used to preserve sort order
+
+        Returns:
+            Updated Task instance with sync_status=synced
+        """
+        task = Task.objects.get(id=task_id)
+        task.external_id = external_id
+        task.etag = etag
+        if position:
+            task.position = position
+        task.sync_status = SyncStatus.SYNCED
+        task.last_synced_at = timezone.now()
+        task.save(
+            update_fields=[
+                "external_id",
+                "etag",
+                "position",
+                "sync_status",
+                "last_synced_at",
+                "updated_at",
+            ]
+        )
+        logger.info(f"Marked task {task_id} as synced (external_id={external_id})")
+        return task
+
+    @staticmethod
+    def mark_skipped(task_id: UUID | str, reason: str = "") -> Task:
+        """
+        Called by the sync worker when the owner has not linked Google.
+
+        Not a failure: there is nothing to push. The periodic sweep revisits
+        skipped records so linking Google later backfills them.
+        """
+        task = Task.objects.get(id=task_id)
+        task.sync_status = SyncStatus.SKIPPED
+        task.save(update_fields=["sync_status", "updated_at"])
+        logger.info(
+            f"Skipped sync for task {task_id}: {reason or 'google not linked'}"
+        )
+        return task
+
+    @staticmethod
+    def mark_sync_failed(task_id: UUID | str, reason: str = "") -> Task:
+        """
+        Called by the sync worker when Google rejected the write for a reason
+        retrying cannot fix.
+        """
+        task = Task.objects.get(id=task_id)
+        task.sync_status = SyncStatus.FAILED
+        task.save(update_fields=["sync_status", "updated_at"])
+        logger.error(f"Marked task {task_id} as failed sync. Reason: {reason}")
+        return task
 
     @staticmethod
     def get_task(owner_id: str, task_id: str) -> Task:

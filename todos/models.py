@@ -19,6 +19,9 @@ class SyncStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     SYNCED = "synced", "Synced"
     FAILED = "failed", "Failed"
+    # The owner has not linked Google, so there is nothing to push. Distinct
+    # from FAILED, which means a real error worth a human looking at.
+    SKIPPED = "skipped", "Skipped"
 
 
 class TaskPriority(models.TextChoices):

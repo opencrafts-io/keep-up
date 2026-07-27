@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+from celery.schedules import crontab
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -115,6 +116,41 @@ RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", None)
 CELERY_BROKER_URL = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
 CELERY_TIMEZONE = "UTC"
 CELERY_RESULT_BACKEND = "rpc://"
+
+# UUIDs are not JSON serialisable, so every task signature takes str(uuid).
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+
+# Acknowledge after the task finishes, so a worker dying mid-sync redelivers
+# the job instead of dropping it. Sync tasks are written to be idempotent.
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+CELERY_TASK_DEFAULT_QUEUE = "keep_up"
+CELERY_TASK_ROUTES = {"todos.tasks.*": {"queue": "google_sync"}}
+
+CELERY_BEAT_SCHEDULE = {
+    # Catches records whose enqueue was lost to a worker restart, and retries
+    # anything that previously failed.
+    "sweep-stale-syncs": {
+        "task": "todos.tasks.sweep_stale_syncs",
+        "schedule": crontab(minute="*/15"),
+    },
+    # Backfill: a user who links Google later gets their existing records
+    # pushed without having to touch anything.
+    "backfill-skipped-syncs": {
+        "task": "todos.tasks.sweep_stale_syncs",
+        "schedule": crontab(hour=3, minute=0),
+        "kwargs": {"include_skipped": True},
+    },
+}
+
+# Google Tasks sync tuning
+GOOGLE_SYNC_STALE_AFTER_MINUTES = int(
+    os.getenv("GOOGLE_SYNC_STALE_AFTER_MINUTES", "15")
+)
+GOOGLE_SYNC_SWEEP_BATCH_SIZE = int(os.getenv("GOOGLE_SYNC_SWEEP_BATCH_SIZE", "500"))
 
 
 REST_FRAMEWORK = {
