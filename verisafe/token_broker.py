@@ -254,6 +254,7 @@ class TokenBroker:
                     capabilities=missing,
                     authorization_url=body.get("authorization_url"),
                     reason=error,
+                    authorization_method=body.get("authorization_method", "POST"),
                 )
 
             # No error field means the rejection is about our credentials, not
