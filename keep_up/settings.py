@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+from celery.schedules import crontab
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -94,12 +95,75 @@ LOGGING = {
     },
 }
 
+# Verisafe setup
+# No default base url: each environment supplies its own, so a missing value
+# fails loudly instead of silently pointing a QA deployment at production.
+VERISAFE_BASE_URL = os.getenv("VERISAFE_BASE_URL")
+VERISAFE_API_KEY = os.getenv("VERISAFE_API_KEY")
+VERISAFE_TIMEOUT = float(os.getenv("VERISAFE_TIMEOUT", "10"))
+VERISAFE_RETRIES = int(os.getenv("VERISAFE_RETRIES", "2"))
+
+
 # Rabbit mq setup
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", None)
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", None)
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", None)
 RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", None)
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", None)
+
+
+# Celery setup
+CELERY_BROKER_URL = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
+CELERY_TIMEZONE = "UTC"
+CELERY_RESULT_BACKEND = "rpc://"
+
+# UUIDs are not JSON serialisable, so every task signature takes str(uuid).
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+
+# Acknowledge after the task finishes, so a worker dying mid-sync redelivers
+# the job instead of dropping it. Sync tasks are written to be idempotent.
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+CELERY_TASK_DEFAULT_QUEUE = "keep_up"
+CELERY_TASK_ROUTES = {"todos.tasks.*": {"queue": "google_sync"}}
+
+CELERY_BEAT_SCHEDULE = {
+    # Catches records whose enqueue was lost to a worker restart, and retries
+    # anything that previously failed.
+    "sweep-stale-syncs": {
+        "task": "todos.tasks.sweep_stale_syncs",
+        "schedule": crontab(minute="*/15"),
+    },
+    # Backfill: a user who links Google later gets their existing records
+    # pushed without having to touch anything.
+    "backfill-skipped-syncs": {
+        "task": "todos.tasks.sweep_stale_syncs",
+        "schedule": crontab(hour=3, minute=0),
+        "kwargs": {"include_skipped": True},
+    },
+    # Bring changes made in the Google Tasks app back into the local database.
+    "pull-from-google": {
+        "task": "todos.tasks.pull_all_users",
+        "schedule": crontab(minute="*/15"),
+    },
+}
+
+# Google Tasks sync tuning
+GOOGLE_SYNC_STALE_AFTER_MINUTES = int(
+    os.getenv("GOOGLE_SYNC_STALE_AFTER_MINUTES", "15")
+)
+GOOGLE_SYNC_SWEEP_BATCH_SIZE = int(os.getenv("GOOGLE_SYNC_SWEEP_BATCH_SIZE", "500"))
+
+# Google Tasks has no sync tokens, so pulls re-read a small overlap window to
+# absorb clock skew. Re-reading unchanged records is free: every write is an
+# idempotent upsert.
+GOOGLE_PULL_OVERLAP_MINUTES = int(os.getenv("GOOGLE_PULL_OVERLAP_MINUTES", "2"))
+# Pulls are spread across this many seconds so a schedule boundary does not
+# put every account on the broker at once.
+GOOGLE_PULL_JITTER_SECONDS = int(os.getenv("GOOGLE_PULL_JITTER_SECONDS", "300"))
 
 
 REST_FRAMEWORK = {
@@ -203,5 +267,3 @@ STATIC_URL = "static/"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-TEST_RUNNER = "keep_up.test_runner.TestcontainersRunner"
