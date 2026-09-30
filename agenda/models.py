@@ -6,15 +6,14 @@ from safedelete.config import SOFT_DELETE_CASCADE
 
 class Event(SafeDeleteModel):
     """
-    Calendar event model that integrates with Google Calendar API.
-    
-    This model represents calendar events that can be synchronized with Google Calendar.
-    It inherits from SafeDeleteModel to provide soft delete functionality with cascade
-    behavior, ensuring deleted events are preserved in the database but hidden from
-    normal queries.
+    Locally owned agenda event with an optional Google Tasks mirror.
+
+    Agenda remains the source of truth. The linked task mirrors the title,
+    description and start date through the existing asynchronous Tasks sync
+    pipeline; richer event fields remain local.
     
     Attributes:
-        id (str): Google Calendar Event ID, serves as the primary key
+        id (str): Local event identifier
         summary (str): Event title/summary (max 1024 characters)
         description (str): Detailed event description (optional)
         location (str): Event location (optional, max 1024 characters)
@@ -25,10 +24,10 @@ class Event(SafeDeleteModel):
         status (str): Event status - confirmed, tentative, or cancelled
         transparency (str): Whether event blocks time on calendar (opaque/transparent)
         calendar_id (str): Google Calendar ID (defaults to 'primary')
-        html_link (str): URL to view event in Google Calendar
-        created (datetime): When event was created in Google Calendar
-        updated (datetime): When event was last updated in Google Calendar
-        etag (str): ETag for concurrency control
+        html_link (str): Legacy Google Calendar link, retained for API compatibility
+        created (datetime): When the local event was created
+        updated (datetime): When the local event was last updated
+        etag (str): Legacy Google Calendar ETag, retained for API compatibility
         attendees (list): List of event attendees (stored as JSON)
         reminders (dict): Event reminder settings (stored as JSON)
         recurrence (list): Recurrence rules for repeating events (stored as JSON)
@@ -73,7 +72,8 @@ class Event(SafeDeleteModel):
     Note:
         - The model automatically handles soft deletes using django-safedelete
         - Events are ordered by start_time by default
-        - All Google Calendar specific fields are preserved for synchronization
+        - The optional task relation carries Google Tasks sync state
+        - Legacy Calendar metadata remains for stored data and API compatibility
     """
     _safedelete_policy = SOFT_DELETE_CASCADE
 
@@ -88,11 +88,12 @@ class Event(SafeDeleteModel):
         "transparent": "Transparent (doesn't block time)",
     }
 
-    # Google Calendar Event ID
+    # Local identifier; existing Google Calendar IDs remain valid after migration.
     id = models.CharField(
         max_length=255,
         primary_key=True,
-        help_text="Google Calendar Event ID"
+        default=uuid.uuid4,
+        help_text="Local agenda event ID"
     )
 
     # Event details
@@ -143,24 +144,24 @@ class Event(SafeDeleteModel):
         help_text="Whether event blocks time on calendar"
     )
 
-    # Google Calendar specific fields
+    # Legacy Google Calendar metadata retained to avoid breaking existing clients.
     calendar_id = models.CharField(
         max_length=255, 
         default="primary",
-        help_text="Google Calendar ID"
+        help_text="Legacy Google Calendar ID"
     )
     html_link = models.URLField(
-        help_text="URL to view event in Google Calendar"
+        blank=True,
+        default="",
+        help_text="Legacy URL to view event in Google Calendar"
     )
-    created = models.DateTimeField(
-        help_text="When event was created in Google Calendar"
-    )
-    updated = models.DateTimeField(
-        help_text="When event was last updated in Google Calendar"
-    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
     etag = models.CharField(
         max_length=255,
-        help_text="ETag for concurrency control"
+        blank=True,
+        default="",
+        help_text="Legacy Google Calendar ETag"
     )
 
     # Attendees (stored as JSON string for simplicity)
@@ -187,8 +188,18 @@ class Event(SafeDeleteModel):
     # Owner
     owner_id = models.UUIDField(
         default=uuid.uuid4, 
-        editable=True,
+        editable=False,
         help_text="User who owns this event"
+    )
+
+    # The Tasks model owns its own sync status and lifecycle. Keeping the link
+    # here lets agenda reuse that worker without duplicating OAuth or retries.
+    task = models.OneToOneField(
+        "todos.Task",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="agenda_event",
     )
 
     class Meta:

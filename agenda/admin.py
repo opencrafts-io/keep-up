@@ -4,11 +4,32 @@ from .models import Event
 # Register your models here.
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
-    list_display = ('summary', 'start_time', 'end_time', 'status', 'owner_id')
+    list_display = (
+        'summary',
+        'start_time',
+        'end_time',
+        'status',
+        'owner_id',
+        'task_sync_status',
+    )
     list_filter = ('status', 'all_day', 'transparency')
     search_fields = ('summary', 'description', 'location')
-    readonly_fields = ('id', 'created', 'updated', 'etag', 'html_link')
+    readonly_fields = (
+        'id',
+        'owner_id',
+        'created',
+        'updated',
+        'etag',
+        'html_link',
+        'task',
+    )
     date_hierarchy = 'start_time'
+
+    @admin.display(description='Google Tasks sync')
+    def task_sync_status(self, event):
+        if not event.task_id:
+            return 'Not linked'
+        return event.task.sync_status
     
     fieldsets = (
         ('Event Details', {
@@ -20,7 +41,10 @@ class EventAdmin(admin.ModelAdmin):
         ('Event Metadata', {
             'fields': ('status', 'transparency')
         }),
-        ('Google Calendar Info', {
+        ('Google Tasks Mirror', {
+            'fields': ('task',),
+        }),
+        ('Legacy Google Calendar Data', {
             'fields': ('calendar_id', 'html_link', 'created', 'updated', 'etag'),
             'classes': ('collapse',)
         }),
