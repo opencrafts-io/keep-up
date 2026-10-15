@@ -19,6 +19,9 @@ class SyncStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     SYNCED = "synced", "Synced"
     FAILED = "failed", "Failed"
+    # The owner has not linked Google, so there is nothing to push. Distinct
+    # from FAILED, which means a real error worth a human looking at.
+    SKIPPED = "skipped", "Skipped"
 
 
 class TaskPriority(models.TextChoices):
@@ -36,6 +39,29 @@ class TaskStatus(models.TextChoices):
 class AttachmentSource(models.TextChoices):
     LOCAL = "local", "Local"
     GOOGLE = "google", "Google"
+
+
+class GoogleSyncState(models.Model):
+    """
+    Per-user watermark for pulling changes back from Google Tasks.
+
+    The Tasks API has no sync tokens, so incremental reads are driven by
+    updatedMin against last_pulled_at. The watermark is the time the pull
+    started, never the time it finished, or changes made while a pull was
+    running would be skipped forever.
+    """
+
+    owner_id = models.UUIDField(primary_key=True)
+    last_pulled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Start time of the last successful pull. Null means never pulled.",
+    )
+    last_attempted_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=512, blank=True, default="")
+
+    def __str__(self):
+        return f"{self.owner_id} last pulled {self.last_pulled_at}"
 
 
 class Tag(models.Model):
@@ -124,7 +150,14 @@ class TaskList(models.Model):
                 fields=["owner_id"],
                 condition=models.Q(is_default=True, deleted=False),
                 name="unique_default_list_per_user",
-            )
+            ),
+            # The pull upserts on this pair. Without the constraint two
+            # overlapping pulls can both miss and both insert.
+            models.UniqueConstraint(
+                fields=["owner_id", "external_id"],
+                condition=~models.Q(external_id=""),
+                name="unique_list_external_id_per_user",
+            ),
         ]
 
     def __str__(self):
@@ -233,6 +266,15 @@ class Task(models.Model):
 
     class Meta:
         ordering = ["status", "due", "position"]
+        constraints = [
+            # The pull upserts on this pair. Without the constraint two
+            # overlapping pulls can both miss and both insert.
+            models.UniqueConstraint(
+                fields=["owner_id", "external_id"],
+                condition=~models.Q(external_id=""),
+                name="unique_task_external_id_per_user",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.title} ({self.owner_id})"

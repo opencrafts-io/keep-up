@@ -108,33 +108,38 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
           yq --version
 
-      - name: Compute deployment file path
+      - name: Compute deployment directory
         id: target
         run: |
           BRANCH="${GITHUB_REF_NAME#refs/heads/}"
           if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
-            FILE="infraops/services/keepup/deployment.yaml"
+            DIR="services/keepup"
           else
-            FILE="infraops/qaservices/keepup/deployment.yaml"
+            DIR="qaservices/keepup"
           fi
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
-          echo "Deployment file: $FILE"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Deployment directory: $DIR"
 
-      - name: Update deployment.yaml
+      - name: Update deployment manifests
         run: |
-          FILE="${{ steps.target.outputs.file }}"
+          DIR="infraops/${{ steps.target.outputs.dir }}"
           IMAGE="${{ steps.tags.outputs.image_base }}:${{ steps.tags.outputs.sha_tag }}"
-          echo "Updating $FILE with image: $IMAGE"
-          if [ ! -f "$FILE" ]; then
-            echo "ERROR: $FILE does not exist!"
-            ls -la "$(dirname $FILE)"
-            exit 1
-          fi
-          echo "Old image:"
-          yq eval '.spec.template.spec.containers[0].image' "$FILE"
-          yq eval ".spec.template.spec.containers[0].image = \"$IMAGE\"" -i "$FILE"
-          echo "New image:"
-          yq eval '.spec.template.spec.containers[0].image' "$FILE"
+
+          # web, worker, and beat all run this same image. Bumping only the web
+          # deployment leaves the worker pinned to whatever tag it was created
+          # with, silently running old code against the current queue.
+          for NAME in deployment worker-deployment beat-deployment; do
+            FILE="$DIR/$NAME.yaml"
+            if [ ! -f "$FILE" ]; then
+              echo "ERROR: $FILE does not exist!"
+              ls -la "$DIR"
+              exit 1
+            fi
+            echo "Updating $FILE with image: $IMAGE"
+            echo "  old: $(yq eval '.spec.template.spec.containers[0].image' "$FILE")"
+            yq eval ".spec.template.spec.containers[0].image = \"$IMAGE\"" -i "$FILE"
+            echo "  new: $(yq eval '.spec.template.spec.containers[0].image' "$FILE")"
+          done
 
       - name: Commit and push changes
         run: |
@@ -143,12 +148,12 @@ jobs:
           git config user.name "CI Bot from Github Actions"
           git config user.email "actions@github.com"
 
-          if [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "master" ]; then
-            FILE="services/keepup/deployment.yaml"
-          else
-            FILE="qaservices/keepup/deployment.yaml"
+          git add "${{ steps.target.outputs.dir }}"
+
+          if git diff --cached --quiet; then
+            echo "Manifests already point at $IMAGE, nothing to commit"
+            exit 0
           fi
 
-          git add "$FILE"
           git commit -m "chore: update keepup image to $IMAGE (${{ github.ref_name }})"
           git push origin main

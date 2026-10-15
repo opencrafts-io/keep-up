@@ -18,7 +18,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
-from .views import PingAPIView
+from .views import GoogleIntegrationStatusView, PingAPIView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -32,4 +32,9 @@ urlpatterns = [
         name="swagger-ui",
     ),
     path("ping", PingAPIView.as_view()),
+    path(
+        "integrations/google/status/",
+        GoogleIntegrationStatusView.as_view(),
+        name="google-integration-status",
+    ),
 ]

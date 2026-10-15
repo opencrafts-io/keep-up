@@ -1,9 +1,39 @@
 import logging
-from django.db import IntegrityError
+from uuid import UUID
+
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from todos.models import TaskList, SyncStatus
 
 logger = logging.getLogger("keep_up")
+
+
+def enqueue_list_sync(list_id) -> None:
+    """
+    Queue a Google Tasks push once the surrounding transaction commits.
+
+    Enqueueing inside the transaction would let a worker read the row before
+    it is durable. The import is deferred because todos.tasks imports this
+    module.
+
+    Outside an atomic block Django runs the callback inline, so this executes
+    within the request. A broker that cannot be reached must therefore not
+    fail the write: the record is already committed as pending, and the
+    periodic sweep re-queues it. Syncing late beats refusing to save.
+    """
+    from todos.tasks import sync_task_list
+
+    def enqueue():
+        try:
+            sync_task_list.delay(str(list_id))
+        except Exception:
+            logger.exception(
+                "Could not queue a Google sync for task list %s; the sweep "
+                "will retry it",
+                list_id,
+            )
+
+    transaction.on_commit(enqueue)
 
 
 class TaskListService:
@@ -57,6 +87,7 @@ class TaskListService:
             f"Created task list '{title}' for user {owner_id} "
             f"(default={is_default}, sync_status=pending)"
         )
+        enqueue_list_sync(task_list.id)
         return task_list
 
     @staticmethod
@@ -109,8 +140,12 @@ class TaskListService:
                     owner_id=owner_id, is_default=True, deleted=False
                 ).update(is_default=False)
             task_list.is_default = new_is_default
+        # A local edit invalidates whatever Google currently holds.
+        if task_list.sync_status == SyncStatus.SYNCED:
+            task_list.sync_status = SyncStatus.PENDING
         task_list.save()
         logger.info(f"Updated task list {list_id} for user {owner_id}")
+        enqueue_list_sync(task_list.id)
         return task_list
 
     @staticmethod
@@ -137,12 +172,16 @@ class TaskListService:
             )
 
         task_list.deleted = True
+        task_list.sync_status = SyncStatus.PENDING
         task_list.save()
 
-        # Soft-delete all tasks in this list
+        # Soft-delete all tasks in this list. Their sync_status is left alone:
+        # deleting the list at Google removes its tasks server-side, so the
+        # worker settles them once the list deletion actually lands.
         task_list.tasks.update(deleted=True)
 
         logger.info(f"Soft-deleted task list {list_id} and its tasks")
+        enqueue_list_sync(task_list.id)
 
     @staticmethod
     def get_user_lists(owner_id: str):
@@ -178,7 +217,7 @@ class TaskListService:
         return task_list
 
     @staticmethod
-    def mark_synced(list_id: str, external_id: str, etag: str) -> TaskList:
+    def mark_synced(list_id: UUID | str, external_id: str, etag: str) -> TaskList:
         """
         Called by the Celery sync worker after successfully creating a list in Google Tasks.
 
@@ -204,7 +243,23 @@ class TaskListService:
         return task_list
 
     @staticmethod
-    def mark_sync_failed(list_id: str, reason: str = "") -> TaskList:
+    def mark_skipped(list_id: UUID | str, reason: str = "") -> TaskList:
+        """
+        Called by the sync worker when the owner has not linked Google.
+
+        Not a failure: there is simply nothing to push. The periodic sweep
+        revisits skipped records so linking Google later backfills them.
+        """
+        task_list = TaskList.objects.get(id=list_id)
+        task_list.sync_status = SyncStatus.SKIPPED
+        task_list.save(update_fields=["sync_status"])
+        logger.info(
+            f"Skipped sync for task list {list_id}: {reason or 'google not linked'}"
+        )
+        return task_list
+
+    @staticmethod
+    def mark_sync_failed(list_id: UUID | str, reason: str = "") -> TaskList:
         """
         Called by the Celery sync worker if syncing fails.
 

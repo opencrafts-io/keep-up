@@ -1,8 +1,8 @@
-import os
 import uuid
 from typing import Any, List, Union
 
 import requests
+from django.conf import settings
 
 
 def retrieve_user_social_accounts(user_id: str) -> Union[List[dict[str, Any]], str]:
@@ -11,11 +11,13 @@ def retrieve_user_social_accounts(user_id: str) -> Union[List[dict[str, Any]], s
     except ValueError:
         return f"Invalid user id format. Please provide a valid UUID"
 
-    url = f"{os.getenv('VERISAFE_BASE_URL')}/socials/user/{user_id}"
+    url = f"{settings.VERISAFE_BASE_URL}/socials/user/{user_id}"
 
     try:
         response = requests.get(
-            url, headers={"x-api-key": os.getenv("VERISAFE_API_KEY")}
+            url,
+            headers={"x-api-key": settings.VERISAFE_API_KEY},
+            timeout=settings.VERISAFE_TIMEOUT,
         )
         response.raise_for_status()
         if response.status_code == 200:
